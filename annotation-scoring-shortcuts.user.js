@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.2.0
+// @version      1.2.1
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -115,7 +115,7 @@
   // ======================================================================
   function ScoringShortcuts(Utils) {
     const TAG = '[Scoring Shortcuts / 打分快捷键]';
-    const VERSION = 'v1.2.0'; // Shown in the panel badge so you can confirm you're running the latest version.
+    const VERSION = 'v1.2.1'; // Shown in the panel badge so you can confirm you're running the latest version.
     // false for annotators (quiet console); flip to true only while debugging.
     const DEBUG = false;
     function log(msg) { if (DEBUG) console.log(`${TAG} ${msg}`); }
@@ -127,8 +127,6 @@
       keyConfusing: 'c', // case-insensitive
       keyErase: 'z',        // clear the active translation's score; stays on the same translation
       keyToggleWindow: 'p', // show/hide the whole shortcuts panel
-      keyPrevTrans: 'q', // same as ArrowUp
-      keyNextTrans: 'e', // same as ArrowDown
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
       pathKey2: '2 Points',
       pathKeyConfusing: 'Confusing',
@@ -147,6 +145,12 @@
     let labelMode = false;    // true while a "2 Points" label pick is in progress
     let labelBusy = false;    // guards against double-firing while a label click is mid-flight
     let labelBadgeRAF = null; // handle for the loop that keeps the label menu's number badges in sync
+    // Remembers the last active translation within each column (1-3 / 4-7),
+    // so ←/→ returns you to where you left off in the other column instead
+    // of jumping to a fixed mirrored slot. Persists across rows on purpose —
+    // if you habitually check e.g. Trans6 first, ← / → keeps landing there.
+    let lastColLeft = null;
+    let lastColRight = null;
 
     // ====================================================================
     // Reading the page
@@ -276,6 +280,9 @@
       // Highlight the whole "TransX Score" block (title + dropdown), not just the dropdown itself.
       const target = mod.querySelector('.cascade-container') || mod;
       target.classList.add('tl-active-score');
+      // Remember which column this translation belongs to, for ←/→ (see jumpColumn).
+      const num = transNumberOf(mod);
+      if (num !== null) { if (num <= 3) lastColLeft = num; else lastColRight = num; }
       return mod;
     }
 
@@ -387,27 +394,31 @@
       setStatus(`Current: Trans${transNumberOf(mods[activeIdx]) || activeIdx + 1}`);
     }
 
-    // Jump sideways to the mirrored translation in the other column:
-    // Trans1↔4, Trans2↔5, Trans3↔6. Since there are only two columns, both
-    // ← and → do the same thing — always toggle to the other column, rather
-    // than being direction-gated and doing nothing on the "wrong" side (e.g.
-    // → used to be a no-op while already in the right column). Trans7 sits
-    // outside the two-column layout, has no mirror, and stays unreachable
-    // via ←/→ — a deliberate, accepted trade-off for a mapping that's
-    // otherwise simple and predictable. If the mirrored translation isn't
-    // currently scoreable (missing or empty), this does nothing rather than
-    // guess where to land instead.
+    // Jump sideways to the other column: Trans1-3 are the left column,
+    // Trans4-7 are the right column. Both ← and → do the same thing —
+    // always toggle to the other column, direction doesn't matter. Rather
+    // than landing on a fixed mirrored slot, this returns you to wherever
+    // you last were in that column (lastColLeft/lastColRight, updated by
+    // applyHighlight on every move); the first time you ever jump into a
+    // column, it lands on the first scoreable translation there. If neither
+    // the remembered nor the fallback translation is currently scoreable
+    // (missing or empty), this does nothing rather than guess.
     function jumpColumn() {
       const mods = getScoreModules();
       if (!mods.length) return;
       const curNum = transNumberOf(mods[activeIdx]);
       if (curNum === null) return;
-      let targetNum;
-      if (curNum >= 1 && curNum <= 3) targetNum = curNum + 3;
-      else if (curNum >= 4 && curNum <= 6) targetNum = curNum - 3;
-      else return; // Trans7 (or anything outside 1-6) has no mirrored column
+      const goingRight = curNum <= 3;
+      const inTargetColumn = goingRight ? (n) => n >= 4 : (n) => n <= 3;
+      const remembered = goingRight ? lastColRight : lastColLeft;
+      let targetNum = remembered !== null && inTargetColumn(remembered) ? remembered : null;
+      if (targetNum === null) {
+        const firstAvailable = mods.map(transNumberOf).find(inTargetColumn);
+        if (firstAvailable === undefined) return; // nothing scoreable in the other column
+        targetNum = firstAvailable;
+      }
       const targetIdx = mods.findIndex((m) => transNumberOf(m) === targetNum);
-      if (targetIdx === -1) return; // mirrored translation isn't scoreable right now — stay put
+      if (targetIdx === -1) return; // target translation isn't scoreable right now — stay put
       activeIdx = targetIdx;
       applyHighlight();
       scrollActiveIntoView();
@@ -702,12 +713,11 @@
       if (!enabled) return;
 
       // Label-pick mode: number keys choose the Nth item in the rightmost column;
-      // arrows/Q/E exit label mode and move to another translation; anything else is ignored.
+      // arrows exit label mode and move to another translation; anything else is ignored.
       if (labelMode) {
         if (/^[0-9]$/.test(e.key)) { e.preventDefault(); pickLabelByNumber(e.key === '0' ? 10 : parseInt(e.key, 10)); return; }
-        const lk = e.key.toLowerCase();
-        if (e.key === 'ArrowDown' || lk === CFG.keyNextTrans) { e.preventDefault(); exitLabelMode(); move(1); return; }
-        if (e.key === 'ArrowUp' || lk === CFG.keyPrevTrans) { e.preventDefault(); exitLabelMode(); move(-1); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); exitLabelMode(); move(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); exitLabelMode(); move(-1); return; }
         return;
       }
 
@@ -725,10 +735,10 @@
       } else if (k === CFG.keyScore2) {
         e.preventDefault();
         enqueueScore(CFG.pathKey2, '2 Points', CFG.advanceOn2);
-      } else if (e.key === 'ArrowDown' || k === CFG.keyNextTrans) {
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         move(1);
-      } else if (e.key === 'ArrowUp' || k === CFG.keyPrevTrans) {
+      } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         move(-1);
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -808,8 +818,8 @@
           <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Erase score</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">3</span> 3 Points</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">2</span> 2 Points → label (<span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> pick)</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">Q</span><span class="tl-kbd">E</span> / <span class="tl-kbd">↑</span><span class="tl-kbd">↓</span> move trans</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> jump column</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span> move trans</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> swap column</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">R</span> Remark composer</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
         </div>
@@ -1167,7 +1177,10 @@
     // ---------- Popover position ----------
     function openPopover(x, y) {
       if (!popover) return;
-      popover.style.display = '';
+      // Must be an explicit value, not '' — the stylesheet rule for
+      // #rmd-popover sets display:none, and clearing an inline style falls
+      // back to the stylesheet rather than showing the element.
+      popover.style.display = 'block';
       if (pinned) return; // user moved it manually — stop auto-repositioning
       const pad = 8;
       const left = Math.max(pad, Math.min(window.innerWidth - popover.offsetWidth - pad, x));
@@ -1289,7 +1302,7 @@
       const val = ta ? ta.value : '';
       if (previewEl) previewEl.value = val;
       setPreview(val);
-      if (popover) { popover.style.display = ''; openPopover(lastMouseX, lastMouseY); }
+      if (popover) { popover.style.display = 'block'; openPopover(lastMouseX, lastMouseY); }
       markTransTitles(true);
       syncOverlayGeometry();
     }
