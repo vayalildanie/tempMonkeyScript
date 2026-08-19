@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.2.2
+// @version      1.2.3
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -1505,7 +1505,7 @@
           background: #fff; border: 1px solid #d9d9e3; border-radius: 12px;
           box-shadow: 0 10px 32px rgba(0,0,0,.18);
           font: 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color: #1f2430;
-          display: none;
+          display: none; flex-direction: column;
         }
         #rmd-head {
           display: flex; align-items: center; gap: 8px; padding: 10px 12px;
