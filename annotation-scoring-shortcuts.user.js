@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.0
+// @version      1.3.1
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -40,7 +40,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.0';
+  const SCRIPT_VERSION = 'v1.3.1';
 
   // ======================================================================
   // Shared utilities
@@ -2240,6 +2240,16 @@
       textA.remarks = next;
       log(`Remarks: appended Annotator 2's line ${idx + 1}`);
       render();
+      // One frame later (see Module 2's focusEditEnd for why synchronous focus loses a fight with the browser pulling
+      // it back toward the button that was just clicked): focus the real Remarks field, put the caret at the end, and
+      // scroll so the newly appended line is visible — makes the whole interaction one click instead of
+      // click-then-manually-click-the-box.
+      requestAnimationFrame(() => {
+        ta.focus();
+        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
+        ta.scrollTop = ta.scrollHeight;
+        syncFieldHighlights(); // re-sync the Trans-N highlight overlay to the new scroll position
+      });
     }
 
     // ====================================================================
@@ -2614,7 +2624,7 @@
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
           <div class="qc-hint">
-            <span style="color:#c92a2a;font-weight:600;">Red</span> = Annotator&nbsp;2 differs — that's what's left to reconcile, and it's counted in the line above until you settle it. <b>Click the red note</b> or <b>Adopt →</b> to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an <span style="color:#1c7ed6;font-weight:600;">Undo</span>. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. <b>Remarks</b> is different: Annotator&nbsp;2's remarks are listed line by line and <span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span> appends just that line to the end of yours — it never replaces or reorders anything you've written, and clicking twice adds it twice.
+            <span style="color:#c92a2a;font-weight:600;">Red Notices</span> indicate where Annotator&nbsp;2 differs from 1 — that's what's left to reconcile. \nClick the "<span style="color:#1c7ed6;font-weight:600;">Adopt →</span>" button to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an "<span style="color:#1c7ed6;font-weight:600;text-decoration:underline;">Undo</span>" button. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. \n<b>Remarks</b> has been updated, but be not afraid! Annotator&nbsp;2's remarks are listed line by line, Click the "<span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span>" button to append that line to the end of Annotator 1's Remarks; "Add" just pastes selected row of text at end of the Remarks and will not replace, reorder, or overwrite anything written.
           </div>
         </div>`;
       document.body.appendChild(p);
