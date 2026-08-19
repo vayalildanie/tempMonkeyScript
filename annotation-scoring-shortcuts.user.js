@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.0.0
+// @version      1.0.1
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -114,7 +114,7 @@
   // ======================================================================
   function ScoringShortcuts(Utils) {
     const TAG = '[Scoring Shortcuts / 打分快捷键]';
-    const VERSION = 'v1.0.0'; // Shown in the panel badge so you can confirm you're running the latest version.
+    const VERSION = 'v1.0.1'; // Shown in the panel badge so you can confirm you're running the latest version.
     // false for annotators (quiet console); flip to true only while debugging.
     const DEBUG = false;
     function log(msg) { if (DEBUG) console.log(`${TAG} ${msg}`); }
@@ -124,6 +124,8 @@
       keyScore3: '3',
       keyScore2: '2',
       keyConfusing: 'c', // case-insensitive
+      keyErase: 'z',        // clear the active translation's score; stays on the same translation
+      keyToggleWindow: 'p', // show/hide the whole shortcuts panel
       keyPrevTrans: 'q', // same as ArrowUp
       keyNextTrans: 'e', // same as ArrowDown
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
@@ -245,6 +247,14 @@
           font: 600 11px/1.4 ui-monospace, Menlo, Consolas, monospace; text-align: center;
           color: #1f2430; background: #fff; border: 1px solid #c2c6d0; border-bottom-width: 2px;
           border-radius: 4px; box-shadow: 0 1px 0 rgba(0,0,0,.04); vertical-align: middle;
+        }
+        /* Bottom-right resize grip on the shortcuts panel (shrink-only, see makeResizable). */
+        .tl-resize-handle {
+          position: absolute; right: 2px; bottom: 2px; width: 14px; height: 14px;
+          cursor: nwse-resize;
+          background:
+            linear-gradient(135deg, transparent 0 40%, #c2c6d0 40% 46%, transparent 46% 60%,
+                             #c2c6d0 60% 66%, transparent 66% 80%, #c2c6d0 80% 86%, transparent 86%);
         }`;
       document.head.appendChild(s);
     }
@@ -371,9 +381,38 @@
       setStatus(`Current: Trans${transNumberOf(mods[activeIdx]) || activeIdx + 1}`);
     }
 
+    // Jump sideways to the mirrored translation in the other column:
+    // Trans1↔4, Trans2↔5, Trans3↔6. Trans7 has no mirror (it sits outside
+    // the two-column layout) and is deliberately unreachable via ←/→ — an
+    // accepted trade-off for keeping the mapping simple and predictable.
+    // If the mirrored translation isn't currently scoreable (missing or
+    // empty), this does nothing rather than guess where to land instead.
+    function moveColumn(delta) {
+      const mods = getScoreModules();
+      if (!mods.length) return;
+      const curNum = transNumberOf(mods[activeIdx]);
+      if (curNum === null) return;
+      const targetNum = curNum + delta;
+      if (targetNum < 1 || targetNum > 6) return; // no mirrored column for this translation (includes Trans7)
+      const targetIdx = mods.findIndex((m) => transNumberOf(m) === targetNum);
+      if (targetIdx === -1) return; // mirrored translation isn't scoreable right now — stay put
+      activeIdx = targetIdx;
+      applyHighlight();
+      scrollActiveIntoView();
+      setStatus(`Current: Trans${targetNum}`);
+    }
+
     // Queue a score request (in key-press order) and kick off processing.
     function enqueueScore(pathKey, label, advance) {
-      queue.push({ pathKey, label, advance });
+      queue.push({ kind: 'set', pathKey, label, advance });
+      pump();
+    }
+
+    // Queue a request to clear the active translation's score. Goes through
+    // the same queue as scoring requests, so a Z press can never race a
+    // 3/C/2 press into acting on the wrong translation.
+    function enqueueErase() {
+      queue.push({ kind: 'erase' });
       pump();
     }
 
@@ -393,10 +432,26 @@
       }
     }
 
-    // Apply a single score request: set it, read the value back to confirm
-    // it actually took, and only then advance. If the read-back doesn't
-    // match what was requested, stop and surface the mismatch — never keep
-    // going as if it had worked.
+    // Click the active translation's own "clear" control (the small × Ant
+    // Design renders on a filled cascader) and blur/collapse afterwards —
+    // same leftover-focus precaution as setScore, since this drives the
+    // same kind of control.
+    async function eraseActive(mod) {
+      await closeOpenCascaders();
+      if (document.activeElement && typeof document.activeElement.blur === 'function') {
+        document.activeElement.blur();
+      }
+      const clearBtn = mod.querySelector('.ant-select-clear');
+      if (!clearBtn) return; // nothing rendered to click — already empty
+      Utils.clickEl(clearBtn);
+      await Utils.waitFor(() => readSelected(mod).length === 0, 800).catch(() => {});
+    }
+
+    // Apply a single request from the queue — either "set this score" or
+    // "erase this score" — read the value back to confirm it actually
+    // took, and only then update the UI. If the read-back doesn't match
+    // what was requested, stop and surface the mismatch — never keep going
+    // as if it had worked.
     async function applyOne(req) {
       const mods = getScoreModules();
       if (!mods.length) { setStatus('No scoring control found'); return; }
@@ -407,6 +462,33 @@
       const mod = mods[idx];
       const name = mod.getAttribute('data-module-name') || `#${idx + 1}`;
       const num = transNumberOf(mod) || idx + 1; // the real Trans number, correct even when earlier slots were skipped
+
+      if (req.kind === 'erase') {
+        const before = readSelected(mod);
+        if (!before) { setStatus(`Trans${num} already empty`); return; }
+        setStatus(`Clearing Trans${num}…`);
+        try {
+          await eraseActive(mod);
+        } catch (e) {
+          console.error(`${TAG} [${name}] Failed to clear score:`, e);
+          setStatus(`Trans${num} clear failed: ${e.message} (stopped)`);
+          queue.length = 0;
+          return;
+        }
+        const got = readSelected(mod);
+        if (got) {
+          setStatus(`⚠️ Trans${num} still shows "${got}" — clear failed`);
+          queue.length = 0;
+          return;
+        }
+        // Stays on the same translation — clearing is a "let me redo this
+        // one" action, not a reason to move on.
+        if (labelMode) exitLabelMode();
+        applyHighlight();
+        setStatus(`Trans${num} cleared`);
+        return;
+      }
+
       setStatus(`Setting Trans${num} = ${req.label}…`);
 
       try {
@@ -595,8 +677,18 @@
         if (labelMode) { e.preventDefault(); exitLabelMode(); setStatus('Label pick cancelled'); }
         return;
       }
+      if (inTextEntry()) return; // typing in Remarks/Rewrite → letter/number keys are for typing, not shortcuts
+
+      // Show/hide the whole panel. Deliberately checked before the enabled
+      // gate below, same as Esc — you can always get the window back even
+      // while shortcuts are turned OFF.
+      if (e.key.toLowerCase() === CFG.keyToggleWindow) {
+        e.preventDefault();
+        setCollapsed(!collapsed);
+        return;
+      }
+
       if (!enabled) return;
-      if (inTextEntry()) return; // typing in Remarks/Rewrite → number keys are for typing, not scoring
 
       // Label-pick mode: number keys choose the Nth item in the rightmost column;
       // arrows/Q/E exit label mode and move to another translation; anything else is ignored.
@@ -616,6 +708,9 @@
       } else if (k === CFG.keyConfusing) {
         e.preventDefault();
         enqueueScore(CFG.pathKeyConfusing, 'Confusing', true);
+      } else if (k === CFG.keyErase) {
+        e.preventDefault();
+        enqueueErase();
       } else if (k === CFG.keyScore2) {
         e.preventDefault();
         enqueueScore(CFG.pathKey2, '2 Points', CFG.advanceOn2);
@@ -625,6 +720,12 @@
       } else if (e.key === 'ArrowUp' || k === CFG.keyPrevTrans) {
         e.preventDefault();
         move(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        moveColumn(3);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        moveColumn(-3);
       }
     }
 
@@ -632,7 +733,9 @@
     // Status panel
     // ====================================================================
 
-    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null;
+    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null;
+    let collapsed = false;    // true while minimized to the bottom-left pill
+    let naturalSize = null;   // {w,h} the panel's default size, measured once on first render — resize can shrink below this but never grow past it
 
     function setStatus(msg) {
       if (statusEl) statusEl.textContent = msg; // shown to the annotator in the panel
@@ -658,6 +761,17 @@
       else { document.querySelectorAll('.tl-active-score').forEach((el) => el.classList.remove('tl-active-score')); setStatus('OFF'); }
     }
 
+    // Show/hide the whole panel, shrinking to a pill in the bottom-left
+    // (matching the Reference module's pattern) while hidden. Reachable via
+    // the — button, the P key, or clicking the pill to restore.
+    function setCollapsed(on) {
+      collapsed = on;
+      try { localStorage.setItem(SCORE_MIN_KEY, on ? '1' : '0'); } catch (e) {}
+      if (panelEl) panelEl.style.display = on ? 'none' : '';
+      if (pillEl) pillEl.style.display = on ? '' : 'none';
+      if (!on && panelEl) clampIntoView(panelEl);
+    }
+
     function injectPanel() {
       if (document.getElementById('tl-score-panel')) return;
       const p = document.createElement('div');
@@ -667,6 +781,7 @@
         'background:#fff', 'border:1px solid #d9d9e3', 'border-radius:10px',
         'box-shadow:0 6px 24px rgba(0,0,0,.15)', 'padding:8px 14px', 'width:min(680px, 96vw)',
         'font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', 'color:#1f2430',
+        'box-sizing:border-box', 'overflow:auto',
       ].join(';');
       p.innerHTML = `
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
@@ -682,10 +797,13 @@
         </div>
         <div id="tl-score-body" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;color:#4b5563;font-size:12px;">
           <span style="white-space:nowrap;"><span class="tl-kbd">C</span> Confusing</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Erase score</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">3</span> 3 Points</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">2</span> 2 Points → label (<span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> pick)</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">Q</span><span class="tl-kbd">E</span> / <span class="tl-kbd">↑</span><span class="tl-kbd">↓</span> move trans</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> jump column</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">R</span> Remark composer</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
           <span id="tl-score-status" style="font-size:12px;color:#3b5bdb;flex:1;min-height:16px;"></span>
@@ -697,6 +815,19 @@
       skippedEl = p.querySelector('#tl-score-skipped');
       toggleBtn = p.querySelector('#tl-score-toggle');
       toggleBtn.addEventListener('click', () => setEnabled(!enabled));
+
+      // Measure the panel's natural (un-resized) size before anything can
+      // override it — this becomes the resize handle's upper bound, so you
+      // can shrink the window but never make it bigger than its default.
+      naturalSize = { w: p.getBoundingClientRect().width, h: p.getBoundingClientRect().height };
+
+      // Resize grip, bottom-right corner — shrink-only (see makeResizable).
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'tl-resize-handle';
+      resizeHandle.title = 'Drag to shrink';
+      p.appendChild(resizeHandle);
+      makeResizable(p, resizeHandle);
+      applySavedSize(p);
 
       // Minimize: hide the whole panel, shrink to a pill in the bottom-left
       // (matching the Reference module's pattern); click the pill to restore.
@@ -714,12 +845,7 @@
           + 'padding:8px 13px;box-shadow:0 2px 10px rgba(0,0,0,.12);display:none';
         document.body.appendChild(pill);
       }
-      function setCollapsed(on) {
-        try { localStorage.setItem(SCORE_MIN_KEY, on ? '1' : '0'); } catch (e) {}
-        p.style.display = on ? 'none' : '';
-        pill.style.display = on ? '' : 'none';
-        if (!on) clampIntoView(p);
-      }
+      pillEl = pill;
       minBtn.addEventListener('click', () => setCollapsed(true));
       pill.onclick = () => setCollapsed(false);
       setCollapsed(localStorage.getItem(SCORE_MIN_KEY) === '1');
@@ -729,9 +855,12 @@
       updateSkippedLine();
     }
 
-    // —— Panel dragging + position persistence (localStorage) ——
+    // —— Panel dragging, resizing, and position/size persistence (localStorage) ——
     const SCORE_POS_KEY = 'trans-tool:nova-score-pos-v3';
     const SCORE_MIN_KEY = 'trans-tool:nova-score-min-v1';
+    const SCORE_SIZE_KEY = 'trans-tool:nova-score-size-v1';
+    const MIN_PANEL_W = 260, MIN_PANEL_H = 90; // small enough to still show the header; body scrolls below that (overflow:auto)
+
     function applySavedPos(p) {
       try {
         const raw = localStorage.getItem(SCORE_POS_KEY);
@@ -775,6 +904,54 @@
         e.preventDefault();
         const r = p.getBoundingClientRect();
         ox = e.clientX - r.left; oy = e.clientY - r.top;
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      });
+    }
+
+    // Bottom-right corner drag, shrink-only: the panel can be made smaller
+    // than its natural size (down to MIN_PANEL_W/H) but never bigger — so
+    // it can never end up covering more of the workbench than it does by
+    // default, only less.
+    function saveSize(p) {
+      try {
+        const r = p.getBoundingClientRect();
+        localStorage.setItem(SCORE_SIZE_KEY, JSON.stringify({ w: Math.round(r.width), h: Math.round(r.height) }));
+      } catch (e) {}
+    }
+    function applySavedSize(p) {
+      try {
+        const raw = localStorage.getItem(SCORE_SIZE_KEY);
+        if (!raw) return;
+        const o = JSON.parse(raw);
+        if (!o || typeof o.w !== 'number' || typeof o.h !== 'number') return;
+        const maxW = naturalSize ? naturalSize.w : o.w;
+        const maxH = naturalSize ? naturalSize.h : o.h;
+        p.style.width = Math.max(MIN_PANEL_W, Math.min(maxW, o.w)) + 'px';
+        p.style.height = Math.max(MIN_PANEL_H, Math.min(maxH, o.h)) + 'px';
+      } catch (e) {}
+    }
+    function makeResizable(p, handle) {
+      let startX = 0, startY = 0, startW = 0, startH = 0;
+      function onMove(e) {
+        const maxW = naturalSize ? naturalSize.w : startW;
+        const maxH = naturalSize ? naturalSize.h : startH;
+        const w = Math.max(MIN_PANEL_W, Math.min(maxW, startW + (e.clientX - startX)));
+        const h = Math.max(MIN_PANEL_H, Math.min(maxH, startH + (e.clientY - startY)));
+        p.style.width = w + 'px';
+        p.style.height = h + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        saveSize(p);
+      }
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation(); // don't also start a panel-drag from the same mousedown
+        const r = p.getBoundingClientRect();
+        startX = e.clientX; startY = e.clientY;
+        startW = r.width; startH = r.height;
         document.addEventListener('mousemove', onMove, true);
         document.addEventListener('mouseup', onUp, true);
       });
