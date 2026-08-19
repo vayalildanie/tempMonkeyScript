@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.2.3
+// @version      1.2.4
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -1298,6 +1298,28 @@
       if (hintEl) hintEl.textContent = msg;
     }
 
+    // NOVA's Remarks textarea can be replaced by React re-renders, so this is
+    // delegated on document (never replaced) rather than holding a direct
+    // listener on the element itself — same reasoning as onDocMouseUp above.
+    // Handles the reverse sync direction: typing directly into NOVA's own
+    // visible Remarks field (instead of the composer box) now flows back
+    // into previewEl too, instead of previewEl going stale and silently
+    // overwriting it on the next composer-side action.
+    function onNovaRemarksInput(e) {
+      if (!active) return; // composer closed → previewEl hidden; enter() reloads fresh on next open
+      const ta = e.target;
+      if (!ta || ta.tagName !== 'TEXTAREA') return;
+      if (!ta.closest || !ta.closest('[data-module-name="Remarks"]')) return;
+      if (!previewEl) return;
+      // Also breaks the composer→NOVA feedback loop: Utils.setNativeValue's
+      // synthetic input event reaches here too, but previewEl.value is
+      // always set before that call, so the values already match and this
+      // is a no-op for that direction.
+      if (previewEl.value === ta.value) return;
+      previewEl.value = ta.value;
+      setPreview(ta.value);
+    }
+
     // Q: turn the current (plain, native) text selection into an excerpt
     // quote — Trans N "raw selected text" — with no word-boundary snapping;
     // this is exactly what the browser selected, taken as-is. Deliberately
@@ -1310,7 +1332,14 @@
     function tryQuoteSelection() {
       const selObj = window.getSelection();
       const text = selObj ? selObj.toString().trim() : '';
-      if (!text) { setHint('Select some text in a translation first, then press Q.'); return false; }
+      if (!text) {
+        // Nothing selected — most likely right after a quote just cleared
+        // the selection. Put the cursor in the composer box so typing
+        // continues there, rather than just leaving a hint and doing nothing.
+        focusEditEnd();
+        setHint('Nothing selected — jumped into the Remark Composer box. Select text in a translation first to quote it.');
+        return false;
+      }
       let anchor = selObj.anchorNode;
       if (anchor && anchor.nodeType === 3) anchor = anchor.parentElement;
       let focus = selObj.focusNode;
@@ -1711,6 +1740,7 @@
       lastRowSig = getRowSig();
       document.addEventListener('keydown', onKeyDown, true);
       document.addEventListener('mouseup', onDocMouseUp, true);
+      document.addEventListener('input', onNovaRemarksInput, true);
       document.addEventListener('mousemove', (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
       const mo = new MutationObserver(onMutate);
       mo.observe(document.body, { childList: true, subtree: true });
