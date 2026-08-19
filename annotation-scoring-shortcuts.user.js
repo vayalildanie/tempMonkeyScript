@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.2.1
+// @version      1.2.2
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -1070,6 +1070,14 @@
     let lastRowSig = '';
     let settleTimer = null;
 
+    // Popover size — deliberately session-ephemeral, never persisted. enter()
+    // resets to these defaults on every open, so closing and reopening via R
+    // always starts fresh regardless of how it was last resized.
+    const POPOVER_DEFAULT_W = 380;  // matches the original fixed CSS width
+    const POPOVER_DEFAULT_H = 420;  // nominal default; tune this constant if it looks off in practice
+    const POPOVER_MIN_W = 300;      // keeps the header buttons (⚙/Clear/✕) from crowding
+    const POPOVER_MIN_H = 260;      // keeps header + edit box + hint usable
+
     function loadStoredChipConfig() {
       try {
         const raw = localStorage.getItem(RMD_STORAGE_KEY);
@@ -1179,8 +1187,9 @@
       if (!popover) return;
       // Must be an explicit value, not '' — the stylesheet rule for
       // #rmd-popover sets display:none, and clearing an inline style falls
-      // back to the stylesheet rather than showing the element.
-      popover.style.display = 'block';
+      // back to the stylesheet rather than showing the element. 'flex' (not
+      // 'block') so #rmd-palette's flex:1 can absorb resized space correctly.
+      popover.style.display = 'flex';
       if (pinned) return; // user moved it manually — stop auto-repositioning
       const pad = 8;
       const left = Math.max(pad, Math.min(window.innerWidth - popover.offsetWidth - pad, x));
@@ -1208,6 +1217,35 @@
         pinned = true; // manual drag → stop following the mouse from now on
         const r = p.getBoundingClientRect();
         ox = e.clientX - r.left; oy = e.clientY - r.top;
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      });
+    }
+
+    // Corner-drag resize, both axes, grow or shrink — unlike Module 1's
+    // panel resize, this is never persisted to localStorage; enter() resets
+    // to POPOVER_DEFAULT_W/H every time the popover opens, so this is purely
+    // a within-session convenience.
+    function makePopoverResizable(p, handle) {
+      let startX = 0, startY = 0, startW = 0, startH = 0;
+      function onMove(e) {
+        const r = p.getBoundingClientRect();
+        const maxW = window.innerWidth - r.left - 8;
+        const maxH = window.innerHeight - r.top - 8;
+        const w = Math.max(POPOVER_MIN_W, Math.min(maxW, startW + (e.clientX - startX)));
+        const h = Math.max(POPOVER_MIN_H, Math.min(maxH, startH + (e.clientY - startY)));
+        p.style.width = w + 'px';
+        p.style.height = h + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+      }
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation(); // don't also trigger makeDraggable's drag
+        const r = p.getBoundingClientRect();
+        startX = e.clientX; startY = e.clientY; startW = r.width; startH = r.height;
         document.addEventListener('mousemove', onMove, true);
         document.addEventListener('mouseup', onUp, true);
       });
@@ -1302,7 +1340,15 @@
       const val = ta ? ta.value : '';
       if (previewEl) previewEl.value = val;
       setPreview(val);
-      if (popover) { popover.style.display = 'block'; openPopover(lastMouseX, lastMouseY); }
+      if (popover) {
+        // Always reset to the default size on open — resizing is
+        // session-ephemeral, never persisted, so a closed-then-reopened
+        // popover starts fresh regardless of how it was last resized.
+        popover.style.width = POPOVER_DEFAULT_W + 'px';
+        popover.style.height = POPOVER_DEFAULT_H + 'px';
+        popover.style.display = 'flex';
+        openPopover(lastMouseX, lastMouseY);
+      }
       markTransTitles(true);
       syncOverlayGeometry();
     }
@@ -1339,7 +1385,7 @@
         </div>
         <div id="rmd-set-body"></div>
         <div class="rmd-set-footer">
-          <button class="rmd-set-btn" id="rmd-set-reset">Reset to defaults</button>
+          <button class="rmd-set-btn rmd-set-reset-btn" id="rmd-set-reset" title="Reset chips and popover size to defaults">↺</button>
           <span style="flex:1;"></span>
           <button class="rmd-set-btn" id="rmd-set-cancel">Cancel</button>
           <button class="rmd-set-btn" id="rmd-set-save" style="background:#3b5bdb;color:#fff;border-color:#3b5bdb;">Save</button>
@@ -1357,6 +1403,13 @@
         if (!confirm('Reset all chip groups to the built-in defaults?')) return;
         settingsBuffer = JSON.parse(JSON.stringify(DEFAULT_CHIP_CONFIG));
         renderSettings();
+        // The chip reset only takes effect on Save, same as any other edit
+        // to the buffer — but the popover's size isn't buffered anywhere,
+        // so there's nothing to "commit" later; reset it immediately instead.
+        if (popover) {
+          popover.style.width = POPOVER_DEFAULT_W + 'px';
+          popover.style.height = POPOVER_DEFAULT_H + 'px';
+        }
       });
       o.querySelector('#rmd-set-cancel').addEventListener('click', closeSettings);
       o.querySelector('#rmd-set-save').addEventListener('click', () => {
@@ -1448,6 +1501,7 @@
         .rmd-clickable-title { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
         #rmd-popover {
           position: fixed; z-index: 2147483647; width: 380px; max-width: 92vw;
+          min-width: 300px; min-height: 260px; box-sizing: border-box;
           background: #fff; border: 1px solid #d9d9e3; border-radius: 12px;
           box-shadow: 0 10px 32px rgba(0,0,0,.18);
           font: 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color: #1f2430;
@@ -1465,6 +1519,7 @@
         #rmd-palette {
           display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
           padding: 10px 12px; max-height: 220px; overflow: auto;
+          flex: 1; min-height: 0;
         }
         .rmd-chip-col { display: flex; flex-direction: column; gap: 4px; }
         .rmd-chip-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
@@ -1504,7 +1559,15 @@
         .rmd-set-chip-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
         .rmd-set-chip-row input[type="text"] { flex: 1; padding: 3px 6px; border: 1px solid #d9d9e3; border-radius: 6px; font-size: 12px; }
         .rmd-set-btn { border: 1px solid #dde1e6; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+        .rmd-set-reset-btn { color: #e03131; border-color: #ffc9c9; font-size: 15px; font-weight: 700; padding: 2px 7px; }
+        .rmd-set-reset-btn:hover { background: #fff0f0; }
         .rmd-set-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 8px; }
+        .rmd-resize-handle {
+          position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+          cursor: nwse-resize;
+          background: linear-gradient(135deg, transparent 0 50%, #c2c6d0 50% 60%,
+                      transparent 60% 70%, #c2c6d0 70% 80%, transparent 80% 100%);
+        }
       `;
       document.head.appendChild(s);
     }
@@ -1528,7 +1591,8 @@
           <div id="rmd-edit-bg" aria-hidden="true"></div>
           <textarea id="rmd-edit" spellcheck="false"></textarea>
         </div>
-        <div id="rmd-hint">Click a translation's title to reference it. Select text in a translation, then press <b>Q</b> to quote it. Click a chip to add a phrase.</div>`;
+        <div id="rmd-hint">Click a translation's title to reference it. Select text in a translation, then press <b>Q</b> to quote it. Click a chip to add a phrase.</div>
+        <div class="rmd-resize-handle" id="rmd-resize-handle" title="Drag to resize"></div>`;
       document.body.appendChild(p);
       popover = p;
       paletteEl = p.querySelector('#rmd-palette');
@@ -1555,6 +1619,8 @@
       previewEl.addEventListener('focus', syncOverlayGeometry);
 
       makeDraggable(p);
+      const resizeHandle = p.querySelector('#rmd-resize-handle');
+      if (resizeHandle) makePopoverResizable(p, resizeHandle);
     }
 
     // ====================================================================
