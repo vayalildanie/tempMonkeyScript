@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.2
+// @version      1.3.3
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -36,16 +36,27 @@
  * while a populated translation is under-labelled (B toggles that check), and
  * the Remarks field grows to fit its content instead of scrolling internally.
  *
+ * v1.3.3 moved that check off Space and onto Enter — Space is back to being
+ * the platform's untouched native submit key, and Enter is now the one held
+ * back while a populated translation is under-labelled (B still toggles it).
+ * The Remark Composer's quote selection (Q) was also loosened: selecting an
+ * entire translation could land the browser's selection boundary just
+ * outside `.preview-content` (a real Selection/Range quirk, not a typo) and
+ * get rejected as "outside the translation" even though only one translation
+ * was ever touched — it now checks which translation *container* the
+ * selection intersects instead, so a full-translation selection quotes
+ * cleanly while a selection spanning two translations is still rejected.
+ *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
  * every value it sets is visible on screen before you submit. It never
  * touches anything you didn't ask it to.
  *
- * One deliberate exception to that, added in v1.3.2: the submit blocker
- * *prevents* an action rather than performing one. It only ever suppresses
- * the Space keystroke — it never finds or clicks the submit button — so
- * clicking Submit with the mouse always works, and B turns the check off
- * entirely.
+ * One deliberate exception to that, added in v1.3.2 and carried forward: the
+ * submit blocker *prevents* an action rather than performing one. It only
+ * ever suppresses the Enter keystroke (Space in v1.3.2) — it never finds or
+ * clicks the submit button — so pressing Space, or clicking Submit with the
+ * mouse, always works, and B turns the check off entirely.
  */
 
 (function () {
@@ -55,7 +66,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.2';
+  const SCRIPT_VERSION = 'v1.3.3';
 
   // ======================================================================
   // Shared utilities
@@ -424,7 +435,7 @@
 
     // ---------- Runtime state ----------
     let enabled = true;       // master on/off switch for the shortcuts
-    // Whether Space is blocked while any populated translation is still
+    // Whether Enter is blocked while any populated translation is still
     // incompletely labelled. Session-only on purpose — deliberately NOT
     // persisted alongside the other trans-tool:nova-score-* keys, so this
     // can never leave a later session quietly unblocked. Toggled with B.
@@ -632,7 +643,7 @@
     }
 
     // Show a transient centered message. Re-shown while already visible just
-    // resets the timer, so holding Space doesn't stack toasts.
+    // resets the timer, so holding Enter doesn't stack toasts.
     let toastTimer = null;
     function showToast(html, ms = 2600) {
       let t = document.getElementById('tl-toast');
@@ -1037,27 +1048,29 @@
       }
       if (inTextEntry()) return; // typing in Remarks/Rewrite → letter/number keys are for typing, not shortcuts
 
-      // Space is the platform's submit. Hold it back while any populated
-      // translation is still incompletely labelled.
+      // Enter is the platform's submit (Space was, through v1.3.2 — moved
+      // here in v1.3.3 so Space goes back to being the platform's untouched
+      // native submit key). Hold Enter back while any populated translation
+      // is still incompletely labelled.
       //
-      // Placed after the inTextEntry() guard on purpose, so Space stays a
-      // literal space whenever a text field has focus — never intercept the
-      // spacebar while someone is typing a remark.
+      // Placed after the inTextEntry() guard on purpose, so Enter stays a
+      // literal newline whenever a text field has focus — never intercept
+      // Enter while someone is typing a remark.
       //
       // We only ever suppress the keystroke; we never look for or click the
-      // submit button. That's why clicking Submit with the mouse still works
-      // as an override, for free.
-      if (e.key === ' ' || e.code === 'Space') {
+      // submit button. That's why clicking Submit with the mouse, or
+      // pressing Space, still works as an override, for free.
+      if (e.key === 'Enter') {
         if (!blockEnabled) return;
         const bad = incompleteTransNumbers();
-        if (!bad.length) return; // everything labelled → the platform's Space proceeds untouched
+        if (!bad.length) return; // everything labelled → the platform's Enter proceeds untouched
         e.preventDefault();
         e.stopImmediatePropagation();
         const list = bad.map((n) => `Trans${n}`).join(', ');
         showToast(
           `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
-          + `<span class="tl-toast-sub">Finish the label, or click Submit with the mouse to override`
-          + ` (<span class="tl-kbd">${CFG.keyToggleBlock.toUpperCase()}</span> turns this check off).</span>`
+          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+          + ` override (<span class="tl-kbd">${CFG.keyToggleBlock.toUpperCase()}</span> turns this check off).</span>`
         );
         setStatus(`⛔ Submit blocked — incomplete: ${list}`);
         return;
@@ -1073,15 +1086,15 @@
       }
 
       // Toggle the submit blocker. Also checked before the enabled gate —
-      // if the blocker is holding Space back, you must be able to switch it
+      // if the blocker is holding Enter back, you must be able to switch it
       // off without first turning the shortcuts back on.
       if (e.key.toLowerCase() === CFG.keyToggleBlock) {
         e.preventDefault();
         blockEnabled = !blockEnabled;
         updateBlockBadge();
         showToast(blockEnabled
-          ? '🛡️ Submit check <b>ON</b><span class="tl-toast-sub">Space is held back until every populated translation has a complete label.</span>'
-          : '⚠️ Submit check <b>OFF</b><span class="tl-toast-sub">Space submits regardless of missing labels.</span>');
+          ? '🛡️ Submit check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>'
+          : '⚠️ Submit check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>');
         setStatus(`Submit check ${blockEnabled ? 'ON' : 'OFF'}`);
         return;
       }
@@ -1137,7 +1150,7 @@
     }
 
     // The submit-blocker's state, in the panel header. Worth showing: if
-    // Space stops working, "why" should be answerable by looking rather than
+    // Enter stops working, "why" should be answerable by looking rather than
     // by remembering whether you pressed B.
     function updateBlockBadge() {
       if (!blockBadgeEl) return;
@@ -1195,7 +1208,7 @@
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
           <span style="font-weight:600;white-space:nowrap;">⌨️ Scoring Shortcuts</span>
           <span style="font-size:11px;background:#ffe066;color:#664d00;padding:1px 7px;border-radius:6px;font-weight:700;">${VERSION}</span>
-          <span id="tl-block-badge" title="Space won't submit until every populated translation has a complete label (B toggles)" style="
+          <span id="tl-block-badge" title="Enter won't submit until every populated translation has a complete label (B toggles)" style="
             font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
           <span style="flex:1;"></span>
           <button id="tl-score-toggle" style="
@@ -1726,6 +1739,18 @@
     // reading. The selection must sit entirely within one translation — a
     // selection spanning more than one, or no selection at all, does
     // nothing (with a hint) rather than guess which translation was meant.
+    //
+    // Containment is checked against the TransN container itself (via
+    // Range.intersectsNode), not `.preview-content` — a straight anchor/
+    // focus `.closest('.preview-content')` check (pre-v1.3.3) rejected the
+    // common case of selecting an *entire* translation, because dragging
+    // past the last character (or releasing in the blank space below the
+    // last line) is a real Selection/Range quirk that resolves the boundary
+    // to `.preview-content`'s parent rather than a node inside it, and
+    // `.closest()` only ever walks upward from where the boundary landed.
+    // Checking which TransN container(s) the range intersects is forgiving
+    // about exactly where within the block the boundary resolved to, while
+    // still refusing a selection that actually spans two translations.
     function tryQuoteSelection() {
       const selObj = window.getSelection();
       const text = selObj ? selObj.toString().trim() : '';
@@ -1737,20 +1762,21 @@
         setHint('Nothing selected — jumped into the Remark Composer box. Select text in a translation first to quote it.');
         return false;
       }
-      let anchor = selObj.anchorNode;
-      if (anchor && anchor.nodeType === 3) anchor = anchor.parentElement;
-      let focus = selObj.focusNode;
-      if (focus && focus.nodeType === 3) focus = focus.parentElement;
-      const anchorContent = anchor && anchor.closest && anchor.closest('.preview-content');
-      const focusContent = focus && focus.closest && focus.closest('.preview-content');
-      if (!anchorContent || anchorContent !== focusContent) {
+      const range = selObj.rangeCount ? selObj.getRangeAt(0) : null;
+      if (!range) return false;
+      let transNum = null;
+      const mods = document.querySelectorAll('[data-module-name]');
+      for (const mod of mods) {
+        const m = /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
+        if (!m || !range.intersectsNode(mod)) continue;
+        if (transNum) { transNum = null; break; } // touches a second translation → ambiguous, bail
+        transNum = m[1];
+      }
+      if (!transNum) {
         setHint('Selection must stay inside a single translation.');
         return false;
       }
-      const mod = anchorContent.closest('[data-module-name]');
-      const m = mod && /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
-      if (!m) return false;
-      appendToken(`Trans ${m[1]} "${text}"`, 'quote');
+      appendToken(`Trans ${transNum} "${text}"`, 'quote');
       if (selObj.removeAllRanges) selObj.removeAllRanges();
       return true;
     }

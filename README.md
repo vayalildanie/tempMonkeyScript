@@ -9,10 +9,11 @@ The script never changes what gets submitted — it only automates the mouse
 clicks a human would otherwise make by hand, and shows its work clearly
 enough that the annotator can see and override anything before submitting.
 
-One deliberate exception, added in `v1.3.2`: the submit blocker *prevents* an
-action rather than performing one. It only suppresses the Space keystroke —
-it never finds or clicks the submit button — so clicking Submit with the mouse
-always works, and `B` turns the check off entirely.
+One deliberate exception, added in `v1.3.2` (and moved onto a different key in
+`v1.3.3`): the submit blocker *prevents* an action rather than performing one.
+It only suppresses the Enter keystroke — it never finds or clicks the submit
+button — so pressing Space, or clicking Submit with the mouse, always works,
+and `B` turns the check off entirely.
 
 It's one file, single-install (open Tampermonkey, paste the script), with
 `@grant none` — it never gains any Tampermonkey API access beyond the normal
@@ -34,7 +35,7 @@ page:
    time) and lets a reviewer swap to the other annotator's value, or relabel
    from scratch, by keyboard or with one click.
 
-It also holds back Space-to-submit while a populated translation is still
+It also holds back Enter-to-submit while a populated translation is still
 missing a complete label, and keeps the Remarks field as tall as its content
 so a long remark never hides inside a scrollbox.
 
@@ -46,6 +47,40 @@ so a long remark never hides inside a scrollbox.
    the file header.
 
 ## Version history
+
+### `v1.3.3` — Submit check moved to Enter, full-translation quoting fixed
+
+Two changes, both refinements of v1.3.2 features rather than new surface.
+
+**The submit blocker now holds back Enter instead of Space.** Space goes back
+to being the platform's untouched native submit key, exactly like before
+`v1.3.2`. Same completeness check, same toast, same `B` toggle — only the key
+it's watching changed. (Announced badge text, toast copy, and the panel
+tooltip were all updated to match.)
+
+**Quoting an entire translation (`Q`) now works.** The check that a selection
+stays inside one translation used to walk `anchorNode`/`focusNode` up to the
+nearest `.preview-content` via `.closest()` — which only ever walks *upward*.
+Selecting a whole translation (dragging past the last character, or releasing
+in the blank space below the last line) is a real `Selection`/`Range` quirk:
+the browser resolves that boundary to `.preview-content`'s *parent*, not a
+node inside it, so `.closest()` could never recognize it and the quote was
+rejected as "outside the translation" — even though only one translation was
+ever touched. Fixed by checking which `TransN` *container* the selection's
+`Range` intersects (`Range.intersectsNode`) instead of which `.preview-content`
+its endpoints happen to resolve to. A selection that actually spans two
+translations is still rejected, since a real cross-translation drag
+intersects two distinct containers. Verified against the exact escaped-
+boundary case in a real browser (not just reasoned about) — see the commit
+for the repro.
+
+**Next up:** the file header points readers at `AGENTS.md` "in this repo" for
+the full feature reference, but it isn't actually tracked in git and its
+content has drifted — it still describes Module 3 as having no keyboard
+shortcuts of its own, which stopped being true in `v1.3.2`. Reconciling
+`AGENTS.md` with the shipped code (and deciding whether it belongs in the
+repo at all) is the plan for `v1.3.4`, before that release adds anything new
+on top.
 
 ### `v1.3.2` — Submit blocker, QC keyboard, Swap, full-height Remarks
 
