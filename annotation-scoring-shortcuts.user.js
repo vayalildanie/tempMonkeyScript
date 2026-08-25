@@ -9,30 +9,29 @@
 // ==/UserScript==
 
 /*
- * Clean rewrite in progress — see AGENTS.md in this repo for the full feature
- * reference, ground rules, and the incremental plan this file is following.
+ * Clean rewrite in progress — see README.md in this repo for the feature
+ * reference, ground rules, shortcut tables, and version history.
  *
  * Status: Phase 0 (shared utilities), Phase 1 (Module 1: Scoring Shortcuts),
  * Module 2 (Remark Composer), and Phase 3 (Module 3: QC Compare) are
  * complete. Module 2 is a redesign, not a faithful port — quoting works
- * differently than in the original script. See AGENTS.md §7 for what changed
- * and why. Module 3 is a faithful port of the original's diff/adopt/undo
- * engine for scores and Rewrite (see AGENTS.md §4.3 for the `canonPath`
- * cascade-matching fix it depends on), with two deliberate departures: the
- * verdict buttons are driven to the reviewer's "1 / 3" rule instead of the
- * original's "correct / wrong" wording, and Remarks uses stateless per-line
- * "＋ Add" buttons instead of the original's whole-field Adopt/Undo. No
- * panel toggle, resize, or verdict-reload fallback — see AGENTS.md §7 for
- * why those were deliberately left out. Phase 4 (Single-model Reference) has
- * not been ported into this file yet — if you need that feature today, keep
- * using the original v0.1.83 script until it lands here.
+ * differently than in the original script (select-then-Q instead of
+ * automatic-on-mouseup). Module 3 is a faithful port of the original's
+ * diff/adopt/undo engine for scores and Rewrite (see `canonPath` below for
+ * the cascade-matching fix it depends on), with two deliberate departures:
+ * the verdict buttons are driven to the reviewer's "1 / 3" rule instead of
+ * the original's "correct / wrong" wording, and Remarks uses stateless
+ * per-line "＋ Add" buttons instead of the original's whole-field
+ * Adopt/Undo. Phase 4 (Single-model Reference) has not been ported into
+ * this file yet — if you need that feature today, keep using the original
+ * v0.1.83 script until it lands here.
  *
  * As of v1.3.2 Module 3 is no longer mouse-only: it has arrow-key selection
  * and keyboard relabelling, and "Adopt" is now the reversible "Swap" (S). The
  * cursor logic behind those arrows is shared with Module 1 via TransCursor —
- * the second sanctioned piece of cross-module code besides Utils, so
- * AGENTS.md §3's "modules stay behaviorally isolated" rule now has two
- * exceptions rather than one. Also new in v1.3.2: Space no longer submits
+ * the second sanctioned piece of cross-module code besides Utils, so the
+ * modules-stay-isolated rule now has two exceptions rather than one. Also
+ * new in v1.3.2: Space no longer submits
  * while a populated translation is under-labelled (B toggles that check), and
  * the Remarks field grows to fit its content instead of scrolling internally.
  *
@@ -223,6 +222,25 @@
       }
       return false;
     },
+
+    // Collapse repeated calls to `fn` (no args) onto the next animation
+    // frame — at most one real call per frame no matter how many times the
+    // returned function is invoked before then. For handlers hung off a
+    // per-keystroke event (input/scroll) that do real DOM reads (offsetTop,
+    // scrollHeight, getComputedStyle) or DOM writes, calling the underlying
+    // work synchronously on every event forces a layout recalculation once
+    // per character typed — on a long field that's the difference between
+    // smooth typing and visible stutter. Fixed origin: added after the
+    // Remarks auto-grow (see startRemarksAutoGrow) and Module 3's live
+    // highlight sync turned out to stack their per-keystroke DOM work.
+    rafThrottle(fn) {
+      let scheduled = false;
+      return function () {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => { scheduled = false; fn(); });
+      };
+    },
   };
 
   // ======================================================================
@@ -410,12 +428,22 @@
 
     injectStyle();
 
+    // rAF-throttled: `grow()` reads scrollHeight (forces layout) and writes
+    // an inline height back — real work, not just a flag flip. Module 2's
+    // composer mirrors every keystroke into this same field
+    // (RemarkComposer's `previewEl` input handler), so without throttling,
+    // a single character typed *in the composer popover* was forcing this
+    // field's layout to recalculate too, once per keystroke. Coalescing to
+    // one call per animation frame keeps typing smooth regardless of how
+    // many input events land in that frame.
+    const scheduleGrow = Utils.rafThrottle(grow);
+
     // One delegated capture-phase listener covers every write path at once:
     // a person typing, and every programmatic write, since setNativeValue
     // dispatches `input` (it has to, for React to see the change at all).
     document.addEventListener('input', (e) => {
       const t = e.target;
-      if (t && t.tagName === 'TEXTAREA' && t.closest && t.closest('[data-module-name="Remarks"]')) grow();
+      if (t && t.tagName === 'TEXTAREA' && t.closest && t.closest('[data-module-name="Remarks"]')) scheduleGrow();
     }, true);
 
     // The content is unchanged but the wrap point moves, so the height must
@@ -438,9 +466,10 @@
   // MODULE 1: Scoring Shortcuts
   //
   // Lets an annotator score any of the 7 translations from the keyboard
-  // instead of mousing into a dropdown for each one. See AGENTS.md §4.1
-  // for the full plain-English explanation of every shortcut and the
-  // reasoning behind the trickier parts of this module.
+  // instead of mousing into a dropdown for each one. See README.md's
+  // "Shortcuts" and "How it stays careful" sections for the full
+  // plain-English explanation of every shortcut and the reasoning behind
+  // the trickier parts of this module.
   // ======================================================================
   function ScoringShortcuts(Utils) {
     const TAG = '[Scoring Shortcuts / 打分快捷键]';
@@ -1500,6 +1529,7 @@
     // ====================================================================
 
     let settleTimer = null;
+    let autoAdvanceTimer = null; // pending auto-Enter for an empty row in Submit Check mode (see below)
     function onMutate() {
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
@@ -1515,6 +1545,20 @@
           const nums = getScoreModules().map(transNumberOf);
           log(`Scoreable Trans on this row: ${nums.join(', ')} (empty ones auto-skipped)`);
           updateSkippedLine();
+          // Nothing to score on this row and Submit Check is on: a real Enter
+          // press would pass its completeness check vacuously anyway, so
+          // press it for the user after a 1s pause instead of leaving them
+          // stuck on a row with nothing to do. Goes through the exact same
+          // Enter handling as a real keypress (completeness check, toast,
+          // dispatchNativeSpace) — this never bypasses that check, it just
+          // supplies the keypress. Cleared on every row change so a stale
+          // timer can never fire against a row it wasn't scheduled for.
+          clearTimeout(autoAdvanceTimer);
+          if (!nums.length && CHECK_MODES[checkModeIdx] === 'submit') {
+            autoAdvanceTimer = setTimeout(() => {
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+            }, 1000);
+          }
           if (enabled) setStatus(`New row · Trans${nums[0] || 1}`);
         }
         if (enabled) applyHighlight();
@@ -1551,10 +1595,9 @@
   //
   // Lets an annotator build a structured remark by clicking translation
   // titles and category chips instead of typing full sentences by hand.
-  // This is a redesign of the original module, not a faithful port — see
-  // AGENTS.md §7 for exactly what changed (quoting works differently) and
-  // why. See AGENTS.md §4.2 for the shared background (chip categories,
-  // the React-controlled-textarea write, etc.).
+  // This is a redesign of the original module, not a faithful port —
+  // quoting is select-then-Q (plain browser selection, no drag-takeover/
+  // word-snapping) instead of the original's automatic-on-mouseup.
   // ======================================================================
   function RemarkComposer(Utils) {
     const RTAG = '[Remark Composer / Remark]';
@@ -2301,16 +2344,16 @@
   // outstanding.
   //
   // This is a faithful, freshly re-derived port of the original v0.1.83
-  // script's Module 3 (docs/for_reference/==UserScript==(v1.83) copy.txt,
-  // lines 1343–2193) — see AGENTS.md §4.3 for the full design record,
-  // including the `canonPath` cascade-matching fix this module depends on
-  // (get this wrong and multi-level adopts silently fail while single-level
-  // ones look fine). Two deliberate departures from the original, both
-  // requested: the verdict buttons are driven to "1" / "3" instead of
-  // "correct" / "wrong", and Remarks uses stateless per-line "＋ Add"
-  // buttons instead of the original's whole-field Adopt/Undo. No panel `P`
-  // toggle, no resize, no verdict-reload fallback — see AGENTS.md §7 for
-  // why those were tried in an earlier build and deliberately left out here.
+  // script's Module 3 (lines 1343–2193 of that script, kept outside this
+  // repo) — see `canonPath` below for the cascade-matching fix
+  // this module depends on (get this wrong and multi-level adopts silently
+  // fail while single-level ones look fine). Two deliberate departures from
+  // the original, both requested: the verdict buttons are driven to "1" /
+  // "3" instead of "correct" / "wrong", and Remarks uses stateless
+  // per-line "＋ Add" buttons instead of the original's whole-field
+  // Adopt/Undo. No resize handle, and no verdict-reload fallback — an
+  // earlier build tried both; the reload fallback had a real loop bug (see
+  // README.md's v1.3.0 note) and was deliberately left out of this rebuild.
   // ======================================================================
   function QCCompare(Utils) {
     const TAG = '[QC Compare / 质检对比]';
@@ -2397,8 +2440,8 @@
     // ====================================================================
     // Reading the page — this module keeps its own copies (not shared with
     // Module 1/2) of anything that isn't a generic DOM helper already in
-    // Utils, matching the file's existing "modules stay behaviorally
-    // isolated" rule (AGENTS.md §3).
+    // Utils, matching the file's "modules stay behaviorally isolated" rule
+    // (README.md's "Ground rules" section).
     // ====================================================================
 
     function nextFrame() { return new Promise((r) => requestAnimationFrame(() => r())); }
@@ -3599,12 +3642,26 @@
       // Typing / scrolling in the platform Remarks/Rewrite field -> live-sync the Trans N highlight overlay.
       const isFieldTA = (el) => el && el.tagName === 'TEXTAREA' && el.closest
         && el.closest('[data-module-name="Remarks"], [data-module-name="Rewrite"]');
-      document.addEventListener('input', (e) => { if (isFieldTA(e.target)) { syncFieldHighlights(); updateWarn(); } }, true);
-      document.addEventListener('scroll', (e) => { if (isFieldTA(e.target)) syncFieldHighlights(); }, true);
+      // rAF-throttled: syncFieldHighlights() calls getComputedStyle and
+      // rebuilds the overlay's innerHTML, and updateWarn() re-derives
+      // get3PtRemarkViolations() (its own DOM read across every Trans score)
+      // a second time on top of the copy syncFieldHighlights already computed
+      // internally — real, non-trivial work that was previously re-run in
+      // full on every single keystroke. Coalescing both to one pass per
+      // animation frame is what actually fixes the typing lag; nothing about
+      // what gets synced changes, only how often the sync work runs.
+      const scheduleFieldSync = Utils.rafThrottle(() => { syncFieldHighlights(); updateWarn(); });
+      const scheduleHLOnly = Utils.rafThrottle(syncFieldHighlights);
+      document.addEventListener('input', (e) => { if (isFieldTA(e.target)) scheduleFieldSync(); }, true);
+      document.addEventListener('scroll', (e) => { if (isFieldTA(e.target)) scheduleHLOnly(); }, true);
       // The Remarks field grows to fit its content (see startRemarksAutoGrow).
       // The highlight overlay is absolutely positioned and sized from the
       // textarea's own offsetWidth/offsetHeight, so it has to be re-measured
-      // whenever that height changes or it drifts off the text.
+      // whenever that height changes or it drifts off the text. Left
+      // un-throttled here on purpose: GROWN_EVENT only fires when grow()
+      // (itself already rAF-throttled) actually changed the height, so this
+      // is already at most once per frame — throttling it again would just
+      // add a frame of lag between the resize and the overlay catching up.
       document.addEventListener(GROWN_EVENT, () => syncFieldHighlights());
       document.addEventListener('keydown', onKeyDown, true); // capture, matching Module 1
       new MutationObserver(onMutate).observe(document.body, { childList: true, subtree: true });

@@ -9,11 +9,14 @@ The script never changes what gets submitted — it only automates the mouse
 clicks a human would otherwise make by hand, and shows its work clearly
 enough that the annotator can see and override anything before submitting.
 
-One deliberate exception, added in `v1.3.2` (and moved onto a different key in
-`v1.3.3`): the submit blocker *prevents* an action rather than performing one.
-It only suppresses the Enter keystroke — it never finds or clicks the submit
-button — so pressing Space, or clicking Submit with the mouse, always works,
-and `B` turns the check off entirely.
+One deliberate exception, added in `v1.3.2` (moved onto a different key in
+`v1.3.3`, made a 3-way cycle in `v1.3.4`): the submit blocker *prevents* an
+action rather than performing one. In its default Label Check mode it only
+suppresses the Enter keystroke — it never finds or clicks the submit button
+— so pressing Space, or clicking Submit with the mouse, always works.
+Submit Check mode is the one deliberate case where the script *does* submit
+for you (by synthesizing that same Space press) rather than just blocking,
+and `Z` cycles through Label Check / Submit Check / Check Off.
 
 It's one file, single-install (open Tampermonkey, paste the script), with
 `@grant none` — it never gains any Tampermonkey API access beyond the normal
@@ -46,7 +49,223 @@ so a long remark never hides inside a scrollbox.
 3. Save. The on-page panel's version badge should match the `@version` in
    the file header.
 
+## Not yet built
+
+**Module 4 — Single-model Reference.** On single-model batches the platform
+shows only one translation per item, with no other models' phrasing to
+compare against. The plan is a strictly read-only lookup panel — never
+touching scoring, labels, or the submit button — driven by an offline-built
+`ref.json` file. Not started; there's no code for it in this file yet.
+
+## Shortcuts (current)
+
+Keyboard shortcuts are scoped per page: Module 1 and Module 2 share the
+score page and bail out entirely on `/quality_` URLs; Module 3 owns the
+`/quality_` page and is unclaimed everywhere else. None of the three fire
+while a text field has focus.
+
+**Module 1 — Scoring Shortcuts** (score page)
+
+| Key | Effect |
+|---|---|
+| `3` | Score the active translation "3 Points", then auto-advance |
+| `C` | Score it "Confusing", then auto-advance |
+| `2` | Score it "2 Points", stay put — leaves the label menu open |
+| `1`–`9`, `0` | While a label menu is open: pick the Nth item |
+| `X` | Clear the active translation's score, stay put |
+| `↑` / `↓` | Move the active translation |
+| `←` / `→` | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
+| `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
+| `P` | Show/hide the shortcuts panel — works even while shortcuts are OFF |
+| `Esc` | Cancel an in-progress label pick |
+
+**Module 2 — Remark Options** (score page; internal module name is still `RemarkComposer`. Module 1 yields the keyboard to it entirely while its popover is open, by checking for `body.rmd-active`)
+
+| Key | Effect |
+|---|---|
+| `O` | Open/close the Remark Options popover |
+| `Q` | Quote the current selection (or, with nothing selected, focus the composer's edit box) |
+| `Esc` | Close the popover, or close its Settings panel if that's open |
+
+**Module 3 — QC Compare** (`/quality_` page)
+
+| Key | Effect |
+|---|---|
+| `3` / `2` / `C` | Relabel the active translation directly to 3 Points / (open) 2 Points / Confusing |
+| `1`–`9`, `0` | While a label menu is open: pick the Nth item |
+| `X` | Clear the active translation's score |
+| `Z` | Swap the active translation to the other annotator's value (press again to swap back) |
+| `↑` / `↓` | Move the active translation |
+| `←` / `→` | Swap columns (Trans1–3 / Trans4–7) |
+| `P` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle |
+| `Esc` | Cancel an in-progress label pick |
+
+## Storage keys
+
+Each module persists its own state under a `trans-tool:` prefix — nothing is
+shared across modules, matching the "modules stay behaviorally isolated"
+rule below.
+
+- **Module 1:** `trans-tool:nova-score-pos-v3` (panel position),
+  `trans-tool:nova-score-min-v1` (minimized state),
+  `trans-tool:nova-score-size-v2` (panel width),
+  `trans-tool:nova-score-check-v1` (submit check mode — added `v1.3.5`).
+- **Module 2:** `trans-tool:nova-remark-chips` (chip configuration; falls
+  back to 30 built-in defaults if absent or invalid).
+- **Module 3:** `trans-tool:nova-qc-pos-v1` (panel position only — the
+  help/legend expanded state is not persisted, and resets open on every
+  reload).
+
+## Ground rules
+
+Invariants the script is expected to keep, regardless of what else changes:
+
+- **`@grant none` stays.** The script never gains Tampermonkey API access
+  beyond the normal browser DOM — a deliberate trust boundary, and part of
+  why annotators can trust it isn't doing anything hidden.
+- **Stays a single `.user.js` file.** No build step, no bundler — editing
+  and installing stays "open file, edit, paste into Tampermonkey."
+- **DOM selectors are functional contracts, not prose to translate.**
+  Several selectors match literal Chinese text the live site renders (e.g.
+  `[data-module-name="笔记外文翻译"]`). These are not comments — they're how
+  the script finds elements. Only comments and log tags get the English
+  rewrite treatment; selector strings never do.
+- **Modules stay behaviorally isolated.** The three modules don't share state.
+  Two pieces of code are the sanctioned exceptions — shared utility
+  functions (`Utils`: click simulation, the poll-until-condition helper, the
+  native-controlled-input value setter) and the cross-module `TransCursor`
+  that gives Module 1 and Module 3 identical arrow-key semantics (added
+  `v1.3.2`) — but no module reads another module's internal state directly.
+- **Comment convention:** English first; original Chinese kept in
+  parentheses immediately after, for any comment carrying real design
+  rationale (not for every line) — e.g. `// Collapse other cascaders first,
+  or a stale one pops open alongside this one (先收掉其它级联,否则残留的会一起弹出).`
+  Console log tags follow the same pattern:
+  `[Scoring Shortcuts / 打分快捷键]`.
+- **Version bump convention:** the on-page badge and `@version` header move
+  together — every module's badge reads from one shared `SCRIPT_VERSION`
+  constant rather than keeping its own, fixing a real drift bug from early
+  in the project (the `@version` header once said `1.2.4` while Module 1's
+  own badge constant still said `v1.2.1`).
+
+## How it stays careful — mechanism notes
+
+Non-obvious behavior that's easy to trip over if you're changing the code
+around it:
+
+- **`canonPath` (Module 3).** The platform's cascader menu items carry their
+  full hierarchy path in a `data-path-key` attribute joined with a private
+  delimiter, while the *displayed* value text uses `" / "` — and some label
+  text itself legitimately contains a literal `/` (e.g. "Unauthentic
+  Vocabulary / Collocations"), so the two can't be compared by naively
+  splitting on `/`. `canonPath` normalizes both sides to the same bare-`/`
+  convention before ever comparing them.
+- **Adjacency-gated popup matching (Modules 1 and 3).** Before trusting a
+  menu popup, the script checks it rendered within ~100px of the exact
+  selector it just clicked — so a leftover popup from a different
+  translation can never get clicked into by mistake.
+- **Collapse-others-then-blur before reopening a dropdown.** If a previous
+  cascader is still focused (even if visually closed), the platform
+  re-opens it alongside the new one, which looks like a random extra
+  dropdown flashing open.
+- **Read back and verify, never guess forward.** Every score/label click is
+  followed by reading the displayed value back and confirming it matches
+  what was requested; a mismatch stops and surfaces rather than silently
+  applying the wrong score.
+- **Sibling-box insertion (Module 3's compare boxes).** The Remarks and
+  Rewrite fields have a layout-enforced fixed height with `overflow:
+  visible` — content appended *inside* them overflows past the bottom edge
+  and gets covered by whatever renders next. Inserting the compare box
+  immediately *after* the field in the DOM gives it its own space instead.
+- **Lazy-load self-correction (Module 3).** The platform sometimes finishes
+  switching QC tabs before the current row's Remarks/Rewrite text has
+  actually loaded, so the first read can capture the *previous* row's
+  leftover text. A short poller re-scrapes automatically for ~2.5s — but
+  only while you're not actively typing in that field.
+- **Stateless per-line "＋ Add" (Module 3 Remarks).** The button never reads
+  what's in the Remarks box and never tracks what it's already added — it
+  only ever appends. Consequences, all intended: clicking the same row
+  twice appends it twice, and "undo" is the textarea's own native undo.
+- **Verdict = "1" / "3" (Module 3).** Driven onto the platform's real
+  `.right-btn` (Annotator 1 → "1") / `.wrong-btn` (Annotator 2 → "3") inside
+  `.quality-container` — same control as the platform's own "correct/wrong"
+  wording, just relabeled to the reviewer's actual convention.
+- **Checked, so nobody chases it again:** the original pre-rewrite script's
+  own QC module header claimed arrow keys jumped between disagreements and
+  highlighted them. That was never actually implemented — its QC module
+  registered no `keydown` handler at all. Nothing was dropped from the
+  original; the header comment was simply stale. (Module 3 only gained real
+  arrow-key navigation later, in `v1.3.2`.)
+
 ## Version history
+
+### `v1.3.5` — Check mode persists, both modules' legends simplified
+
+Three changes, none behavioral for scoring itself — all legend/persistence
+cleanup following `v1.3.4`.
+
+**The submit check mode now survives a reload.** Previously `checkModeIdx`
+was session-only by explicit design (see `v1.3.4`'s "quietly on a
+non-default mode" reasoning) — this reverses that: it's now saved to
+`localStorage` under `trans-tool:nova-score-check-v1` on every `Z` cycle and
+reloaded in `start()`. A brand-new session with nothing yet stored still
+starts on Label Check (index 0), so the reversal only affects a session that
+already chose something else — a reload mid-row no longer silently drops a
+reviewer who deliberately switched to Submit Check or Check Off back into
+Label Check.
+
+**Both modules' legends were compacted.** Module 1's separate `3 3 Points` /
+`2 2 Points → label (1–9 pick)` lines became one `1–9 Label/Score Selection`
+line (display only — the keys themselves are unchanged), and `P`'s label
+changed from "Show/hide window" to "Show/hide Legend". Module 3's help text
+was a full prose paragraph explaining Swap/Undo/Add by hand; it's now the
+same compact `<span>` row-list style Module 1 uses, matching the visual
+language across both modules.
+
+**Module 3 (QC Compare) remapped Swap and gained `P`.** Swap moved from `S`
+to `Z` (freeing `S`, unused since), pushing erase/clear from `Z` to `X` —
+the same `Z`→check-cycle / `X`→erase pattern `v1.3.4` established in Module
+1, so the two modules' key layouts now read the same way even though they do
+different things. `P` toggles the help/legend panel by flipping the same
+`helpOpen` flag and calling the same `applyHelp()` the panel's own `▸`/`▾`
+triangle already used — no new toggle logic, just a second way to trigger
+the existing one.
+
+### `v1.3.4` — Submit Check ternary, shortcut remap, legend cleanup
+
+The submit blocker becomes a 3-way cycle instead of a plain on/off, plus the
+key remapping that made room for it.
+
+**`Z` (was `B`) now cycles three modes instead of toggling one.** *Label
+Check* is the old default: block Enter on an incomplete label, let a clean
+Enter through untouched. *Submit Check* adds real teeth — on a clean check
+it also synthesizes the platform's native Space keypress
+(`dispatchNativeSpace`, a real `keydown`+`keyup` pair targeted at
+`document.activeElement`), so a clean Enter both checks and submits in one
+press. *Check Off* is unchanged: no check at all. This is a second
+deliberate exception to "the script only clicks for you, never for itself"
+(the first was the blocker itself, in `v1.3.2`) — Submit Check mode does
+drive a real submission, but only after the identical completeness check the
+other two modes share, and only as the direct result of the user's own
+Enter press, never on a timer or silently. A clean pass in any mode now also
+shows a green confirmation toast (`.tl-toast-ok`) instead of staying silent,
+so a passed check is as visible as a blocked one.
+
+**Keys remapped to make room.** Erase moved `Z`→`X`; `Confusing` stays `C`.
+The Remark Composer's open/close shortcut moved `R`→`O` and its user-facing
+name changed to "Remark Options" (the internal module name and identifiers
+are unchanged — renamed in the UI only, same pattern `v1.3.2` used for
+Adopt→Swap).
+
+**Legend reorganized:** the check-cycle line moved to the top, and the two
+arrow-key lines (move translation / swap column) merged into one "Move
+Translation Focus" line.
+
+**Known gap carried forward:** the `AGENTS.md` reconciliation flagged as
+"next up" in `v1.3.3` still hasn't happened — the file isn't present
+anywhere in this repo (tracked or untracked), so the script header's pointer
+to it is currently a dead reference rather than just stale content. Worth
+resolving before it causes real confusion for a new reader.
 
 ### `v1.3.3` — Submit check moved to Enter, full-translation quoting fixed
 
