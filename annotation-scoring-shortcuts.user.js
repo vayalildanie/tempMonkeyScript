@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.3
+// @version      1.3.4
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -47,16 +47,37 @@
  * selection intersects instead, so a full-translation selection quotes
  * cleanly while a selection spanning two translations is still rejected.
  *
+ * v1.3.4 turned the binary submit blocker into a 3-way check that cycles
+ * with Z (was B): Label Check (today's old behavior — block on incomplete,
+ * let a clean Enter through untouched), Submit Check (same blocking, but a
+ * clean Enter also presses Space for you, actually submitting), and Check
+ * Off (no check at all). A clean check now also shows a green confirmation
+ * toast instead of staying silent, so a passed check is as visible as a
+ * blocked one. Erase moved from Z to X to make room; Confusing stays on C.
+ * The Remark Composer's open/close shortcut moved from R to O, and its
+ * user-facing name changed to "Remark Options" (its internal module name is
+ * unchanged). The check-cycle line moved to the top of the shortcuts legend,
+ * and the two arrow-key lines (move translation / swap column) were merged
+ * into one "Move Translation Focus" line.
+ *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
  * every value it sets is visible on screen before you submit. It never
  * touches anything you didn't ask it to.
  *
  * One deliberate exception to that, added in v1.3.2 and carried forward: the
- * submit blocker *prevents* an action rather than performing one. It only
- * ever suppresses the Enter keystroke (Space in v1.3.2) — it never finds or
- * clicks the submit button — so pressing Space, or clicking Submit with the
- * mouse, always works, and B turns the check off entirely.
+ * submit blocker *prevents* an action rather than performing one. In Label
+ * Check and Check Off mode it only ever suppresses the Enter keystroke —
+ * it never finds or clicks the submit button — so pressing Space, or
+ * clicking Submit with the mouse, always works, and Z cycles past the check
+ * entirely.
+ *
+ * A second deliberate exception, added in v1.3.4: Submit Check mode *does*
+ * drive a submission. On a clean check it synthesizes the same Space
+ * keypress your own hand would send — but only after the identical
+ * label-completeness check the other two modes use, and only as a direct,
+ * visible result of your own Enter press. Never on a timer, never silently,
+ * and never in the other two modes.
  */
 
 (function () {
@@ -66,7 +87,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.3';
+  const SCRIPT_VERSION = 'v1.3.4';
 
   // ======================================================================
   // Shared utilities
@@ -421,9 +442,9 @@
       keyScore3: '3',
       keyScore2: '2',
       keyConfusing: 'c', // case-insensitive
-      keyErase: 'z',        // clear the active translation's score; stays on the same translation
+      keyErase: 'x',         // clear the active translation's score; stays on the same translation
       keyToggleWindow: 'p', // show/hide the whole shortcuts panel
-      keyToggleBlock: 'b',  // turn the submit blocker on/off (see blockEnabled)
+      keyCycleCheck: 'z',   // cycles the submit check: Label Check → Submit Check → Check Off (see CHECK_MODES)
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
       pathKey2: '2 Points',
       pathKeyConfusing: 'Confusing',
@@ -435,11 +456,17 @@
 
     // ---------- Runtime state ----------
     let enabled = true;       // master on/off switch for the shortcuts
-    // Whether Enter is blocked while any populated translation is still
-    // incompletely labelled. Session-only on purpose — deliberately NOT
-    // persisted alongside the other trans-tool:nova-score-* keys, so this
-    // can never leave a later session quietly unblocked. Toggled with B.
-    let blockEnabled = true;
+    // The submit check's 3-way mode: whether/how Enter is held back while any
+    // populated translation is still incompletely labelled. Session-only on
+    // purpose — deliberately NOT persisted alongside the other
+    // trans-tool:nova-score-* keys, so this can never leave a later session
+    // quietly on a non-default mode. Always starts at Label Check. Cycled
+    // with Z (CFG.keyCycleCheck).
+    //   'label'  — block on incomplete, let a clean Enter through untouched (today's default behavior)
+    //   'submit' — same blocking, but a clean Enter also synthesizes Space to actually submit
+    //   'off'    — no check at all, Enter always proceeds untouched
+    const CHECK_MODES = ['label', 'submit', 'off'];
+    let checkModeIdx = 0;
     let lastRowSig = '';      // fingerprint of the previous row's source text, to detect a row change
     let queue = [];           // pending score requests, strictly in the order keys were pressed
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
@@ -571,6 +598,24 @@
       return getScoreModules().filter((m) => !isLabelComplete(m)).map(transNumberOf);
     }
 
+    // ---- Submit Check: synthesize the platform's native Space submit ----
+    // Space (not Enter) is the platform's real submit key — see the Enter
+    // handler's comment below. Submit Check mode fires this once the check
+    // passes, so a clean Enter both checks and submits in one press. Fires a
+    // full keydown+keyup pair, bubbling, the same "real sequence of events"
+    // approach Utils.fireMouse uses for synthetic mouse input. Targets
+    // document.activeElement (falling back to document) since that's what a
+    // real Space press would be scoped to — this is the one piece of this
+    // feature that can only be confirmed against the live site; if it
+    // doesn't trigger a submission, check the platform's own Space listener
+    // in devtools for its actual target/expected event shape.
+    function dispatchNativeSpace() {
+      const target = document.activeElement || document;
+      const opts = { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent('keydown', opts));
+      target.dispatchEvent(new KeyboardEvent('keyup', opts));
+    }
+
     // A fingerprint for "which row am I on" — the source text is always
     // present and different per row, so a change in it means the page has
     // navigated to a new row and per-row state (the cursor, etc.) should reset.
@@ -638,14 +683,22 @@
         }
         #tl-toast.tl-toast-show { opacity: 1; }
         #tl-toast b { color: #c92a2a; }
-        #tl-toast .tl-toast-sub { display: block; margin-top: 5px; font-size: 12px; color: #a1690a; }`;
+        #tl-toast .tl-toast-sub { display: block; margin-top: 5px; font-size: 12px; color: #a1690a; }
+        /* Pass variant — a check that succeeded, not one that blocked. Kept as a
+           class toggle on the same #tl-toast element rather than a second toast
+           system, so both variants share position/sizing/timer logic. */
+        #tl-toast.tl-toast-ok { background: #ebfbee; color: #2b8a3e; border-color: #2f9e44; }
+        #tl-toast.tl-toast-ok b { color: #2b8a3e; }
+        #tl-toast.tl-toast-ok .tl-toast-sub { color: #2f9e44; }`;
       document.head.appendChild(s);
     }
 
     // Show a transient centered message. Re-shown while already visible just
-    // resets the timer, so holding Enter doesn't stack toasts.
+    // resets the timer, so holding Enter doesn't stack toasts. `variant`
+    // 'warn' (default) is the amber blocked-submission style; 'ok' is the
+    // green pass-confirmation style (see .tl-toast-ok above).
     let toastTimer = null;
-    function showToast(html, ms = 2600) {
+    function showToast(html, ms = 2600, variant = 'warn') {
       let t = document.getElementById('tl-toast');
       if (!t) {
         injectStyle();
@@ -654,6 +707,7 @@
         document.body.appendChild(t);
       }
       t.innerHTML = html;
+      t.classList.toggle('tl-toast-ok', variant === 'ok');
       // Next frame, so the opacity transition actually runs on first show.
       requestAnimationFrame(() => t.classList.add('tl-toast-show'));
       clearTimeout(toastTimer);
@@ -1051,28 +1105,43 @@
       // Enter is the platform's submit (Space was, through v1.3.2 — moved
       // here in v1.3.3 so Space goes back to being the platform's untouched
       // native submit key). Hold Enter back while any populated translation
-      // is still incompletely labelled.
+      // is still incompletely labelled, per the current check mode.
       //
       // Placed after the inTextEntry() guard on purpose, so Enter stays a
       // literal newline whenever a text field has focus — never intercept
       // Enter while someone is typing a remark.
       //
-      // We only ever suppress the keystroke; we never look for or click the
-      // submit button. That's why clicking Submit with the mouse, or
-      // pressing Space, still works as an override, for free.
+      // Label Check and Submit Check share the same block-on-incomplete
+      // logic; they only differ on a clean pass — Label Check just lets the
+      // (inert) Enter through as before, Submit Check also fires a
+      // synthetic Space to actually submit (see dispatchNativeSpace, and
+      // the docstring's v1.3.4 note on this being a second deliberate
+      // exception to "only ever suppress, never click/press for you").
       if (e.key === 'Enter') {
-        if (!blockEnabled) return;
+        const checkMode = CHECK_MODES[checkModeIdx];
+        if (checkMode === 'off') return;
         const bad = incompleteTransNumbers();
-        if (!bad.length) return; // everything labelled → the platform's Enter proceeds untouched
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const list = bad.map((n) => `Trans${n}`).join(', ');
-        showToast(
-          `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
-          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
-          + ` override (<span class="tl-kbd">${CFG.keyToggleBlock.toUpperCase()}</span> turns this check off).</span>`
-        );
-        setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+        if (bad.length) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const list = bad.map((n) => `Trans${n}`).join(', ');
+          showToast(
+            `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
+            + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+            + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
+          );
+          setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+          return;
+        }
+        // Everything labelled — a clean pass, worth confirming instead of staying silent.
+        showToast('✅ Check passed — every populated translation is labelled.', 1600, 'ok');
+        if (checkMode === 'submit') {
+          e.preventDefault(); // this Enter's own effect is replaced by the synthesized Space below
+          dispatchNativeSpace();
+          setStatus('✅ Check passed — submitted');
+        } else {
+          setStatus('✅ Check passed');
+        }
         return;
       }
 
@@ -1085,17 +1154,21 @@
         return;
       }
 
-      // Toggle the submit blocker. Also checked before the enabled gate —
-      // if the blocker is holding Enter back, you must be able to switch it
-      // off without first turning the shortcuts back on.
-      if (e.key.toLowerCase() === CFG.keyToggleBlock) {
+      // Cycle the submit check mode. Also checked before the enabled gate —
+      // if a check is holding Enter back, you must be able to change it
+      // without first turning the shortcuts back on.
+      if (e.key.toLowerCase() === CFG.keyCycleCheck) {
         e.preventDefault();
-        blockEnabled = !blockEnabled;
-        updateBlockBadge();
-        showToast(blockEnabled
-          ? '🛡️ Submit check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>'
-          : '⚠️ Submit check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>');
-        setStatus(`Submit check ${blockEnabled ? 'ON' : 'OFF'}`);
+        checkModeIdx = (checkModeIdx + 1) % CHECK_MODES.length;
+        updateCheckBadge();
+        const mode = CHECK_MODES[checkModeIdx];
+        const msgs = {
+          label: '🛡️ Label Check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>',
+          submit: '⚔️ Submit Check <b>ON</b><span class="tl-toast-sub">On a clean check, Enter also submits (presses Space for you) automatically.</span>',
+          off: '⚠️ Check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>',
+        };
+        showToast(msgs[mode]);
+        setStatus(`Check mode: ${mode === 'label' ? 'Label Check' : mode === 'submit' ? 'Submit Check' : 'Check OFF'}`);
         return;
       }
 
@@ -1140,7 +1213,7 @@
     // Status panel
     // ====================================================================
 
-    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null, blockBadgeEl = null;
+    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null, checkBadgeEl = null;
     let collapsed = false;    // true while minimized to the bottom-left pill
     let naturalWidth = null;  // the panel's default width, measured once on first render — resize can shrink below this but never grow past it
 
@@ -1149,15 +1222,23 @@
       log(msg);                                 // echoed to console only when DEBUG is on
     }
 
-    // The submit-blocker's state, in the panel header. Worth showing: if
-    // Enter stops working, "why" should be answerable by looking rather than
-    // by remembering whether you pressed B.
-    function updateBlockBadge() {
-      if (!blockBadgeEl) return;
-      blockBadgeEl.textContent = blockEnabled ? '🛡️ Submit check' : '⚠️ Check OFF';
-      blockBadgeEl.style.background = blockEnabled ? '#ebfbee' : '#fff0f0';
-      blockBadgeEl.style.color = blockEnabled ? '#2b8a3e' : '#c92a2a';
-      blockBadgeEl.style.border = `1px solid ${blockEnabled ? '#b2f2bb' : '#ffc9c9'}`;
+    // The submit check's mode, in the panel header. Worth showing: if Enter
+    // stops working (or starts submitting for you), "why" should be
+    // answerable by looking rather than by remembering how many times you
+    // pressed Z. Submit Check uses the panel's own accent blue so it reads
+    // as a deliberate "on-brand" third state, not an arbitrary new color.
+    function updateCheckBadge() {
+      if (!checkBadgeEl) return;
+      const styles = {
+        label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
+        submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
+        off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
+      };
+      const s = styles[CHECK_MODES[checkModeIdx]];
+      checkBadgeEl.textContent = s.text;
+      checkBadgeEl.style.background = s.bg;
+      checkBadgeEl.style.color = s.fg;
+      checkBadgeEl.style.border = `1px solid ${s.border}`;
     }
 
     // Shows which translations on this row were skipped for having no text.
@@ -1208,7 +1289,7 @@
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
           <span style="font-weight:600;white-space:nowrap;">⌨️ Scoring Shortcuts</span>
           <span style="font-size:11px;background:#ffe066;color:#664d00;padding:1px 7px;border-radius:6px;font-weight:700;">${VERSION}</span>
-          <span id="tl-block-badge" title="Enter won't submit until every populated translation has a complete label (B toggles)" style="
+          <span id="tl-check-badge" title="Z cycles: Label Check → Submit Check → Check Off" style="
             font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
           <span style="flex:1;"></span>
           <button id="tl-score-toggle" style="
@@ -1219,15 +1300,14 @@
             font-weight:700;cursor:pointer;line-height:1;white-space:nowrap;">—</button>
         </div>
         <div id="tl-score-body" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;color:#4b5563;font-size:12px;">
+          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Cycle check mode</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">C</span> Confusing</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Erase score</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">X</span> Erase score</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">3</span> 3 Points</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">2</span> 2 Points → label (<span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> pick)</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span> move trans</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> swap column</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">R</span> Remark composer</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span><span class="tl-kbd">←</span><span class="tl-kbd">→</span> Move Translation Focus</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">O</span> Remark Options</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">B</span> Submit check on/off</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
           <span id="tl-score-status" style="font-size:12px;color:#3b5bdb;flex:1;min-height:16px;"></span>
@@ -1239,8 +1319,8 @@
       skippedEl = p.querySelector('#tl-score-skipped');
       toggleBtn = p.querySelector('#tl-score-toggle');
       toggleBtn.addEventListener('click', () => setEnabled(!enabled));
-      blockBadgeEl = p.querySelector('#tl-block-badge');
-      updateBlockBadge();
+      checkBadgeEl = p.querySelector('#tl-check-badge');
+      updateCheckBadge();
 
       // Measure the panel's natural (un-resized) width before anything can
       // override it — this becomes the resize handle's upper bound, so you
@@ -1759,7 +1839,7 @@
         // the selection. Put the cursor in the composer box so typing
         // continues there, rather than just leaving a hint and doing nothing.
         focusEditEnd();
-        setHint('Nothing selected — jumped into the Remark Composer box. Select text in a translation first to quote it.');
+        setHint('Nothing selected — jumped into the Remark Options box. Select text in a translation first to quote it.');
         return false;
       }
       const range = selObj.rangeCount ? selObj.getRangeAt(0) : null;
@@ -2032,7 +2112,7 @@
       p.id = 'rmd-popover';
       p.innerHTML = `
         <div id="rmd-head">
-          <span class="rmd-title">📝 Remark Composer</span>
+          <span class="rmd-title">📝 Remark Options</span>
           <span style="flex:1;"></span>
           <button id="rmd-settings-btn" title="Settings">⚙</button>
           <button id="rmd-clear-btn" title="Clear">Clear</button>
@@ -2103,10 +2183,10 @@
         return;
       }
 
-      if (typing()) return; // don't hijack R/Q while typing anywhere, including our own edit box
+      if (typing()) return; // don't hijack O/Q while typing anywhere, including our own edit box
 
       const k = e.key.toLowerCase();
-      if (k === 'r') {
+      if (k === 'o') {
         e.preventDefault();
         toggle();
       } else if (k === 'q' && active) {
