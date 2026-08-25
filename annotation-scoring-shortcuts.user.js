@@ -59,6 +59,9 @@
  * unchanged). The check-cycle line moved to the top of the shortcuts legend,
  * and the two arrow-key lines (move translation / swap column) were merged
  * into one "Move Translation Focus" line.
+ * also simplified the legend's separate "3 3 Points" / "2 2 Points → label
+ * (1–9 pick)" lines into a single "1–9 Label/Score Selection" line. Display
+ * only — the 3/2/1-9 keys themselves are unchanged.
  *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
@@ -457,16 +460,20 @@
     // ---------- Runtime state ----------
     let enabled = true;       // master on/off switch for the shortcuts
     // The submit check's 3-way mode: whether/how Enter is held back while any
-    // populated translation is still incompletely labelled. Session-only on
-    // purpose — deliberately NOT persisted alongside the other
-    // trans-tool:nova-score-* keys, so this can never leave a later session
-    // quietly on a non-default mode. Always starts at Label Check. Cycled
-    // with Z (CFG.keyCycleCheck).
+    // populated translation is still incompletely labelled. Persisted across
+    // reloads (SCORE_CHECK_KEY, alongside the other trans-tool:nova-score-*
+    // keys — see the Panel dragging/resizing/persistence section below) so a
+    // reload mid-row doesn't silently drop you back into Label Check. A
+    // brand-new session with nothing yet in localStorage still starts at
+    // Label Check ('label' is index 0, and loadSavedCheckModeIdx() falls
+    // back to 0 when nothing's stored) — only an *existing* saved mode
+    // survives a refresh, never a fresh install/first run. Cycled with Z
+    // (CFG.keyCycleCheck); loaded in start() and saved on every cycle.
     //   'label'  — block on incomplete, let a clean Enter through untouched (today's default behavior)
     //   'submit' — same blocking, but a clean Enter also synthesizes Space to actually submit
     //   'off'    — no check at all, Enter always proceeds untouched
     const CHECK_MODES = ['label', 'submit', 'off'];
-    let checkModeIdx = 0;
+    let checkModeIdx = 0; // overwritten in start() from SCORE_CHECK_KEY if a saved mode exists
     let lastRowSig = '';      // fingerprint of the previous row's source text, to detect a row change
     let queue = [];           // pending score requests, strictly in the order keys were pressed
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
@@ -1160,6 +1167,7 @@
       if (e.key.toLowerCase() === CFG.keyCycleCheck) {
         e.preventDefault();
         checkModeIdx = (checkModeIdx + 1) % CHECK_MODES.length;
+        saveCheckModeIdx();
         updateCheckBadge();
         const mode = CHECK_MODES[checkModeIdx];
         const msgs = {
@@ -1303,11 +1311,10 @@
           <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Cycle check mode</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">C</span> Confusing</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">X</span> Erase score</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">3</span> 3 Points</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">2</span> 2 Points → label (<span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> pick)</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> Label/Score Selection</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span><span class="tl-kbd">←</span><span class="tl-kbd">→</span> Move Translation Focus</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">O</span> Remark Options</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide Legend</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
           <span id="tl-score-status" style="font-size:12px;color:#3b5bdb;flex:1;min-height:16px;"></span>
@@ -1367,7 +1374,22 @@
     const SCORE_POS_KEY = 'trans-tool:nova-score-pos-v3';
     const SCORE_MIN_KEY = 'trans-tool:nova-score-min-v1';
     const SCORE_SIZE_KEY = 'trans-tool:nova-score-size-v2';
+    const SCORE_CHECK_KEY = 'trans-tool:nova-score-check-v1';
     const MIN_PANEL_W = 260; // small enough to still show the header row and its buttons
+
+    // Load the saved check mode, if any. Falls back to index 0 ('label')
+    // whenever nothing's stored yet — that's what makes a fresh install
+    // start on Label Check while an existing session's mode still survives
+    // a reload.
+    function loadSavedCheckModeIdx() {
+      try {
+        const idx = CHECK_MODES.indexOf(localStorage.getItem(SCORE_CHECK_KEY));
+        return idx === -1 ? 0 : idx;
+      } catch (e) { return 0; }
+    }
+    function saveCheckModeIdx() {
+      try { localStorage.setItem(SCORE_CHECK_KEY, CHECK_MODES[checkModeIdx]); } catch (e) {}
+    }
 
     function applySavedPos(p) {
       try {
@@ -1499,6 +1521,7 @@
       // shortcuts/panel stay out of the way there to avoid conflicting with
       // that workflow.
       if (/\/quality_/.test(location.href)) { log('QC page → scoring module not enabled (质检页 → 打分模块不启用)'); return; }
+      checkModeIdx = loadSavedCheckModeIdx(); // survives a reload; falls back to Label Check on a fresh session
       injectStyle();
       injectPanel();
       lastRowSig = getRowSig();
