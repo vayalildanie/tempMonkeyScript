@@ -69,7 +69,16 @@
  * prose paragraph was replaced with the same compact row-list style Module
  * 1 uses, and Swap moved from S to Z (freeing S), pushing erase/clear from
  * Z to X; P was added to toggle the help/legend panel, matching a click on
- * its own `▸`/`▾` triangle.
+ * its own `▸`/`▾` triangle. v1.3.5 also added Alt to Module 1 as a second,
+ * purely additive check trigger alongside Enter (performCheck factored out
+ * of the old inline Enter handler, so both keys run the identical
+ * completeness check; Alt never submits on its own — only the same
+ * synthetic Space a clean Enter would trigger). And in Module 3, arrow-key
+ * selection now continues past the last Translation into Annotator 2's
+ * addable Remarks lines and then Rewrite (no wraparound, Annotator 1's tab
+ * only); Z on a selected Remark line does the same one-shot append its own
+ * "+ Add" button does, and Z on a selected Rewrite does the same adopt/undo
+ * toggle its "Swap →"/"Undo" buttons do.
  *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
@@ -1137,9 +1146,56 @@
     // cascader's own hidden search box.
     const inTextEntry = () => Utils.inTextEntry();
 
+    // The label-completeness check, shared by both its triggers: Enter (the
+    // platform's own submit key, which this has always gated) and Alt
+    // (added in v1.3.5 as a second, purely additive trigger — press it any
+    // time to check without needing to actually submit). Label Check and
+    // Submit Check share the same block-on-incomplete logic; they only
+    // differ on a clean pass — Label Check just lets the key's own effect
+    // through as before, Submit Check also fires a synthetic Space to
+    // actually submit (see dispatchNativeSpace, and the docstring's v1.3.4
+    // note on this being a second deliberate exception to "only ever
+    // suppress, never click/press for you").
+    function performCheck(e) {
+      const checkMode = CHECK_MODES[checkModeIdx];
+      if (checkMode === 'off') return;
+      const bad = incompleteTransNumbers();
+      if (bad.length) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const list = bad.map((n) => `Trans${n}`).join(', ');
+        showToast(
+          `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
+          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+          + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
+        );
+        setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+        return;
+      }
+      // Everything labelled — a clean pass, worth confirming instead of staying silent.
+      showToast('✅ Check passed — every populated translation is labelled.', 1600, 'ok');
+      if (checkMode === 'submit') {
+        e.preventDefault(); // this key's own effect is replaced by the synthesized Space below
+        dispatchNativeSpace();
+        setStatus('✅ Check passed — submitted');
+      } else {
+        setStatus('✅ Check passed');
+      }
+    }
+
     function onKeyDown(e) {
-      if (e.ctrlKey || e.metaKey || e.altKey) return; // never touch modifier combos (the platform's own Ctrl+H, etc.)
       if (document.body.classList.contains('rmd-active')) return; // Remark Composer drawer open → keyboard is entirely its
+      // Alt alone is a manual "check now" trigger (v1.3.5), additive to
+      // Enter below — it never submits by itself even in Submit Check mode,
+      // it only runs the same completeness check (dispatchNativeSpace inside
+      // performCheck is what submits, same as a clean Enter). Checked before
+      // the modifier-combo guard on purpose, since a bare Alt press also has
+      // altKey===true; real Alt+X combos still fall through to that guard
+      // untouched. preventDefault is unconditional here (unlike Enter) since
+      // Alt alone has no page effect worth preserving, and left unprevented
+      // it can toggle a browser's menu-bar focus (e.g. Firefox).
+      if (e.key === 'Alt') { e.preventDefault(); performCheck(e); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey) return; // never touch modifier combos (the platform's own Ctrl+H, etc.)
       if (e.key === 'Escape') {
         // Esc only cancels an in-progress label pick — the master on/off switch is button-only, by design.
         if (labelMode) { e.preventDefault(); exitLabelMode(); setStatus('Label pick cancelled'); }
@@ -1155,40 +1211,7 @@
       // Placed after the inTextEntry() guard on purpose, so Enter stays a
       // literal newline whenever a text field has focus — never intercept
       // Enter while someone is typing a remark.
-      //
-      // Label Check and Submit Check share the same block-on-incomplete
-      // logic; they only differ on a clean pass — Label Check just lets the
-      // (inert) Enter through as before, Submit Check also fires a
-      // synthetic Space to actually submit (see dispatchNativeSpace, and
-      // the docstring's v1.3.4 note on this being a second deliberate
-      // exception to "only ever suppress, never click/press for you").
-      if (e.key === 'Enter') {
-        const checkMode = CHECK_MODES[checkModeIdx];
-        if (checkMode === 'off') return;
-        const bad = incompleteTransNumbers();
-        if (bad.length) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          const list = bad.map((n) => `Trans${n}`).join(', ');
-          showToast(
-            `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
-            + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
-            + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
-          );
-          setStatus(`⛔ Submit blocked — incomplete: ${list}`);
-          return;
-        }
-        // Everything labelled — a clean pass, worth confirming instead of staying silent.
-        showToast('✅ Check passed — every populated translation is labelled.', 1600, 'ok');
-        if (checkMode === 'submit') {
-          e.preventDefault(); // this Enter's own effect is replaced by the synthesized Space below
-          dispatchNativeSpace();
-          setStatus('✅ Check passed — submitted');
-        } else {
-          setStatus('✅ Check passed');
-        }
-        return;
-      }
+      if (e.key === 'Enter') { performCheck(e); return; }
 
       // Show/hide the whole panel. Checked before the enabled gate below,
       // same as Esc — you can always get the window back even while
@@ -1347,6 +1370,7 @@
         </div>
         <div id="tl-score-body" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;color:#4b5563;font-size:12px;">
           <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Cycle check mode</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Alt</span> Check labels now</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">C</span> Confusing</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">X</span> Erase score</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> Label/Score Selection</span>
@@ -3024,6 +3048,7 @@
       if (verifyIv) { clearInterval(verifyIv); verifyIv = null; }
       scraping = true;
       adopted.clear(); adoptedText.clear(); // new row -> clear the previous row's adopt/undo records
+      extraSel = null; // new row's Remarks/Rewrite content is unrelated to the old selection
       clearBadges(); clearTextBoxes();
       setSummary('Loading Annotator 2…');
       try {
@@ -3232,7 +3257,7 @@
     // same way the badges themselves do. renderBadges bails while !ready, so
     // nothing paints until the scrape completes — which is what we want,
     // since the hosts are being rebuilt anyway.
-    function render() { renderBadges(); renderTextCompare(); updateWarn(); cursor.sync(); }
+    function render() { renderBadges(); renderTextCompare(); updateWarn(); cursor.sync(); reapplyExtHighlight(); }
 
     // ====================================================================
     // Selection cursor (added v1.3.2)
@@ -3272,6 +3297,66 @@
     function swap(n) {
       if (n == null) { setCursorStatus('No translation selected'); return; }
       return adopted.has(n) ? undoAdopt(n) : adoptOther(n);
+    }
+
+    // ====================================================================
+    // Extended selection: Remarks +Add lines and Rewrite (added v1.3.5)
+    //
+    // The shared TransCursor only knows Trans numbers (it's also used by
+    // Module 1, which has no Remarks/Rewrite concept), so rather than
+    // teaching it non-Trans items, this is a small parallel selection layer
+    // local to this module: ↓ past the last Trans hands off into this list,
+    // ↑ from its first item hands back to the last Trans. Deliberately no
+    // wraparound at either end, matching TransCursor.step's own clamping.
+    // ====================================================================
+    let extraSel = null; // null | { type: 'remark', idx } | { type: 'rewrite' }
+
+    // Indices (into splitRemarkLines(textB.remarks)) of lines that actually
+    // have a "+ Add" button — i.e. exactly the rows renderTextCompare draws
+    // in the picklist branch (lines ~3202-3221 above): Annotator 1's tab
+    // only, remarks or not (per that branch's own comment, the picklist
+    // shows regardless of match), blank lines excluded (no button).
+    function remarkAddLines() {
+      if (!ready || activeTabIndex() !== 0) return [];
+      const out = [];
+      splitRemarkLines(textB.remarks || '').forEach((line, i) => { if (line.trim()) out.push(i); });
+      return out;
+    }
+    // Whether the Rewrite "Swap →" control is currently renderable — same gate renderTextCompare's adoptBtn uses.
+    function rewriteAvailable() {
+      return ready && activeTabIndex() === 0 && !!document.querySelector('[data-module-name="Rewrite"]');
+    }
+    function extList() {
+      const out = remarkAddLines().map((idx) => ({ type: 'remark', idx }));
+      if (rewriteAvailable()) out.push({ type: 'rewrite' });
+      return out;
+    }
+    function sameExt(a, b) { return !!a && !!b && a.type === b.type && a.idx === b.idx; }
+
+    // Paint (or clear) the extended-selection highlight. Mirrors the
+    // cursor's own onChange above, but on the Remarks/Rewrite boxes instead
+    // of a Trans score module.
+    function selectExt(item, { scroll = true } = {}) {
+      document.querySelectorAll('.qc-active-score, .qc-active-pick').forEach((el) => el.classList.remove('qc-active-score', 'qc-active-pick'));
+      extraSel = item;
+      if (!item) return;
+      let el = null;
+      if (item.type === 'remark') {
+        const btn = document.querySelector(`.qc-tb-append[data-append-line="${item.idx}"]`);
+        el = btn && btn.closest('.qc-tb-pick-row');
+        setCursorStatus(`Remark line ${item.idx + 1} selected`);
+      } else {
+        el = document.querySelector('.qc-textbox[data-qc-for="rewrite"]');
+        setCursorStatus('Rewrite selected');
+      }
+      if (!el) { extraSel = null; return; } // content changed under us — fail quiet, not broken
+      el.classList.add('qc-active-pick');
+      if (scroll) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    // Re-apply the extended highlight after a re-render rebuilt the DOM it lives on (renderTextCompare rewrites
+    // innerHTML wholesale) — same reason cursor.sync() exists for the Trans badges.
+    function reapplyExtHighlight() {
+      if (extraSel) selectExt(extraSel, { scroll: false });
     }
 
     // Rule-check warning: a 3-Points Trans shouldn't have a remark.
@@ -3355,6 +3440,15 @@
            never injected here. Same amber-on-pale-yellow look, so the two
            pages read the same way. */
         .qc-active-score {
+          outline: 2px solid #f0a500 !important;
+          outline-offset: 2px;
+          background: rgba(255, 221, 87, .30) !important;
+          border-radius: 6px;
+        }
+
+        /* Extended-selection highlight (Remarks +Add line / Rewrite, added v1.3.5) — same look as .qc-active-score,
+           applied to a .qc-tb-pick-row or the Rewrite .qc-textbox instead of a Trans score module. */
+        .qc-active-pick {
           outline: 2px solid #f0a500 !important;
           outline-offset: 2px;
           background: rgba(255, 221, 87, .30) !important;
@@ -3463,11 +3557,11 @@
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
           <div class="qc-hint" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;">
-            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Labels</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Labels · Adds Remark line · Swaps Rewrite</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">C</span> Confusing</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">X</span> Clear Label</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">1</span>–<span class="qc-kbd">9</span> Label/Score Selection</span>
-            <span style="white-space:nowrap;"><span class="qc-kbd">↑</span><span class="qc-kbd">↓</span><span class="qc-kbd">←</span><span class="qc-kbd">→</span> Move Translation Focus</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">↑</span><span class="qc-kbd">↓</span><span class="qc-kbd">←</span><span class="qc-kbd">→</span> Move Focus (Trans → Remark +Add → Rewrite)</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">P</span> Show/Hide Legend</span>
           </div>
         </div>`;
@@ -3583,11 +3677,44 @@
       if (Utils.inTextEntry()) return; // typing in Remarks/Rewrite — the keys are for typing
 
       switch (e.key) {
-        case 'ArrowDown': e.preventDefault(); cursor.step(1); return;
-        case 'ArrowUp': e.preventDefault(); cursor.step(-1); return;
-        // Either arrow toggles column; the direction is ignored, matching Module 1.
+        case 'ArrowDown':
+          e.preventDefault();
+          if (extraSel) {
+            const list = extList();
+            const i = list.findIndex((x) => sameExt(x, extraSel));
+            if (i !== -1 && i < list.length - 1) selectExt(list[i + 1]); // else already at the end — stay put, no wrap
+            return;
+          }
+          {
+            const nums = cursor.list();
+            if (nums.length && cursor.get() === nums[nums.length - 1]) {
+              const list = extList();
+              if (list.length) { selectExt(list[0]); return; } // last Trans -> hand off to Remarks +Add / Rewrite
+            }
+          }
+          cursor.step(1);
+          return;
+        case 'ArrowUp':
+          e.preventDefault();
+          if (extraSel) {
+            const list = extList();
+            const i = list.findIndex((x) => sameExt(x, extraSel));
+            if (i > 0) { selectExt(list[i - 1]); return; }
+            const nums = cursor.list(); // first extended item -> hand back to the last Trans
+            extraSel = null;
+            document.querySelectorAll('.qc-active-pick').forEach((el) => el.classList.remove('qc-active-pick'));
+            if (nums.length) cursor.set(nums[nums.length - 1], { scroll: true });
+            return;
+          }
+          cursor.step(-1);
+          return;
+        // Either arrow toggles column; the direction is ignored, matching Module 1. Column toggle is a Trans-only
+        // concept, so it's a no-op while a Remark line / Rewrite is selected.
         case 'ArrowLeft':
-        case 'ArrowRight': e.preventDefault(); cursor.toggleColumn(); return;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (!extraSel) cursor.toggleColumn();
+          return;
       }
 
       // Digits are overloaded: 2 and 3 are score keys, but 1-9/0 also pick
@@ -3604,7 +3731,18 @@
 
       const k = e.key.toLowerCase();
       if (k === 'p') { e.preventDefault(); helpOpen = !helpOpen; applyHelp(); return; }
-      if (k === 'z') { e.preventDefault(); swap(n); return; }
+      if (k === 'z') {
+        e.preventDefault();
+        if (extraSel) {
+          // Remark line -> same one-shot append as clicking + Add; Rewrite -> same adopt/undo toggle as the
+          // existing Swap →/Undo buttons. Neither is a new action, just a keyboard path to the existing one.
+          if (extraSel.type === 'remark') appendRemarkLine(extraSel.idx);
+          else if (adoptedText.has('rewrite')) undoFieldText('rewrite'); else adoptFieldText('rewrite');
+          return;
+        }
+        swap(n);
+        return;
+      }
       if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
       if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
     }

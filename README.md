@@ -76,6 +76,7 @@ while a text field has focus.
 | `↑` / `↓` | Move the active translation |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
+| `Alt` | Run the check now (same as a clean/blocked Enter), without submitting on its own even in Submit Check mode |
 | `P` | Show/hide the shortcuts panel — works even while shortcuts are OFF |
 | `Esc` | Cancel an in-progress label pick |
 
@@ -94,8 +95,8 @@ while a text field has focus.
 | `3` / `2` / `C` | Relabel the active translation directly to 3 Points / (open) 2 Points / Confusing |
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item |
 | `X` | Clear the active translation's score |
-| `Z` | Swap the active translation to the other annotator's value (press again to swap back) |
-| `↑` / `↓` | Move the active translation |
+| `Z` | Swap the active translation to the other annotator's value (press again to swap back); on a selected Remark +Add line, append that line; on Rewrite, swap/undo it the same as its "Swap →"/"Undo" button |
+| `↑` / `↓` | Move the active translation — past the last one, continues into the Remarks +Add lines, then Rewrite |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) |
 | `P` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle |
 | `Esc` | Cancel an in-progress label pick |
@@ -199,10 +200,11 @@ around it:
 
 ## Version history
 
-### `v1.3.5` — Check mode persists, both modules' legends simplified
+### `v1.3.5` — Check mode persists, legends simplified, Alt check trigger, Remark/Rewrite keyboard selection
 
-Three changes, none behavioral for scoring itself — all legend/persistence
-cleanup following `v1.3.4`.
+Five changes: persistence and legend cleanup following `v1.3.4`, plus two
+new behaviors — `Alt` as a second check trigger in Module 1, and arrow-key
+selection extended into Remarks +Add / Rewrite in Module 3.
 
 **The submit check mode now survives a reload.** Previously `checkModeIdx`
 was session-only by explicit design (see `v1.3.4`'s "quietly on a
@@ -230,6 +232,33 @@ different things. `P` toggles the help/legend panel by flipping the same
 `helpOpen` flag and calling the same `applyHelp()` the panel's own `▸`/`▾`
 triangle already used — no new toggle logic, just a second way to trigger
 the existing one.
+
+**Module 1 gained `Alt` as a second, additive check trigger.** Previously
+the completeness check only ran on Enter; `Alt` alone now runs the exact
+same check (`performCheck`, factored out of the old inline Enter handler) at
+any time, in both Label Check and Submit Check mode, without needing to
+press Enter. It's purely additive — Enter's own behavior, including Submit
+Check's synthetic Space on a clean pass, is unchanged, and `Alt` never
+submits by itself (it can only trigger the same synthetic Space that a clean
+Enter would). Real `Alt+X` combos are unaffected — only a bare `Alt` press
+is special-cased, ahead of the modifier-combo guard that still bails on
+everything else.
+
+**Module 3 (QC Compare)'s arrow-key selection now continues past the last
+Translation into Remarks +Add and Rewrite.** `↓` from the last selectable
+Translation moves into Annotator 2's Remarks lines that have a "+ Add"
+button (skipping blank lines), then into Rewrite if it's renderable, then
+stops — no wraparound, mirroring how `TransCursor.step` already clamps at
+either end of the Translation list; `↑` walks back the same way. Both are
+scoped to Annotator 1's tab (the tab the +Add buttons and Rewrite's "Swap →"
+control actually render on) and reset on every row change. `Z` now does the
+context-appropriate thing for whichever is selected: on a Remark line, the
+same one-shot append `+ Add` already did; on Rewrite, the same adopt/undo
+toggle its "Swap →"/"Undo" buttons already did. Neither is new business
+logic — both keyboard paths call the exact same functions the existing mouse
+clicks did (`appendRemarkLine`, `adoptFieldText`/`undoFieldText`).
+`←`/`→` (column toggle) stay a Translation-only concept and no-op while a
+Remark line or Rewrite is selected.
 
 ### `v1.3.4` — Submit Check ternary, shortcut remap, legend cleanup
 
