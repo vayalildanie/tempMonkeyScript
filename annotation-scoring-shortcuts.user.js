@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.4
+// @version      1.3.5
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -59,9 +59,18 @@
  * unchanged). The check-cycle line moved to the top of the shortcuts legend,
  * and the two arrow-key lines (move translation / swap column) were merged
  * into one "Move Translation Focus" line.
- * also simplified the legend's separate "3 3 Points" / "2 2 Points → label
- * (1–9 pick)" lines into a single "1–9 Label/Score Selection" line. Display
- * only — the 3/2/1-9 keys themselves are unchanged.
+ * v1.3.5 simplified both modules' legends. In Module 1: the separate "3 3
+ * Points" / "2 2 Points → label (1–9 pick)" lines became one "1–9
+ * Label/Score Selection" line (display only — those keys are unchanged),
+ * and the P line's label changed from "Show/hide window" to "Show/hide
+ * Legend". The check mode (Label/Submit/Check Off) is now persisted across
+ * reloads instead of always resetting — a fresh session with nothing yet
+ * saved still starts on Label Check, but an existing session's mode now
+ * survives a refresh. In Module 3 (QC Compare): its keyboard-shortcuts
+ * prose paragraph was replaced with the same compact row-list style Module
+ * 1 uses, and Swap moved from S to Z (freeing S), pushing erase/clear from
+ * Z to X; P was added to toggle the help/legend panel, matching a click on
+ * its own `▸`/`▾` triangle.
  *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
@@ -90,7 +99,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.4';
+  const SCRIPT_VERSION = 'v1.3.5';
 
   // ======================================================================
   // Shared utilities
@@ -3410,9 +3419,13 @@
         <div id="qc-cursor"></div>
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
-          <div class="qc-hint">
-            <span style="color:#c92a2a;font-weight:600;">Red Notices</span> indicate where Annotator&nbsp;2 differs from 1 — that's what's left to reconcile. \nClick the "<span style="color:#1c7ed6;font-weight:600;">Swap →</span>" button to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an "<span style="color:#1c7ed6;font-weight:600;text-decoration:underline;">Undo</span>" button. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. \n<b>Remarks</b> has been updated, but be not afraid! Annotator&nbsp;2's remarks are listed line by line, Click the "<span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span>" button to append that line to the end of Annotator 1's Remarks; "Add" just pastes selected row of text at end of the Remarks and will not replace, reorder, or overwrite anything written.
-            \n<b>Keyboard</b> (new): <span class="qc-kbd">↑</span><span class="qc-kbd">↓</span> select a translation, <span class="qc-kbd">←</span><span class="qc-kbd">→</span> switch column (Trans1-3 / Trans4-7). <span class="qc-kbd">S</span> swaps the selected translation to the other annotator's value — press it again to swap back. <span class="qc-kbd">3</span> / <span class="qc-kbd">C</span> / <span class="qc-kbd">Z</span> score it 3&nbsp;Points / Confusing / clear; <span class="qc-kbd">2</span> then <span class="qc-kbd">1</span>-<span class="qc-kbd">9</span><span class="qc-kbd">0</span> picks a 2&nbsp;Points label, <span class="qc-kbd">Esc</span> cancels. Shortcuts are off while you're typing in a text field, and edits only apply on the Annotator&nbsp;1 tab.
+          <div class="qc-hint" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;">
+            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Labels</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">C</span> Confusing</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">X</span> Clear Label</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">1</span>–<span class="qc-kbd">9</span> Label/Score Selection</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">↑</span><span class="qc-kbd">↓</span><span class="qc-kbd">←</span><span class="qc-kbd">→</span> Move Translation Focus</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">P</span> Show/Hide Legend</span>
           </div>
         </div>`;
       document.body.appendChild(p);
@@ -3547,8 +3560,9 @@
       }
 
       const k = e.key.toLowerCase();
-      if (k === 's') { e.preventDefault(); swap(n); return; }
-      if (k === 'z') { e.preventDefault(); eraseScore(n); return; }
+      if (k === 'p') { e.preventDefault(); helpOpen = !helpOpen; applyHelp(); return; }
+      if (k === 'z') { e.preventDefault(); swap(n); return; }
+      if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
       if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
     }
 
