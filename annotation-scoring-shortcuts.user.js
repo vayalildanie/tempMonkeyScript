@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.3
+// @version      1.3.5
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -9,30 +9,29 @@
 // ==/UserScript==
 
 /*
- * Clean rewrite in progress — see AGENTS.md in this repo for the full feature
- * reference, ground rules, and the incremental plan this file is following.
+ * Clean rewrite in progress — see README.md in this repo for the feature
+ * reference, ground rules, shortcut tables, and version history.
  *
  * Status: Phase 0 (shared utilities), Phase 1 (Module 1: Scoring Shortcuts),
  * Module 2 (Remark Composer), and Phase 3 (Module 3: QC Compare) are
  * complete. Module 2 is a redesign, not a faithful port — quoting works
- * differently than in the original script. See AGENTS.md §7 for what changed
- * and why. Module 3 is a faithful port of the original's diff/adopt/undo
- * engine for scores and Rewrite (see AGENTS.md §4.3 for the `canonPath`
- * cascade-matching fix it depends on), with two deliberate departures: the
- * verdict buttons are driven to the reviewer's "1 / 3" rule instead of the
- * original's "correct / wrong" wording, and Remarks uses stateless per-line
- * "＋ Add" buttons instead of the original's whole-field Adopt/Undo. No
- * panel toggle, resize, or verdict-reload fallback — see AGENTS.md §7 for
- * why those were deliberately left out. Phase 4 (Single-model Reference) has
- * not been ported into this file yet — if you need that feature today, keep
- * using the original v0.1.83 script until it lands here.
+ * differently than in the original script (select-then-Q instead of
+ * automatic-on-mouseup). Module 3 is a faithful port of the original's
+ * diff/adopt/undo engine for scores and Rewrite (see `canonPath` below for
+ * the cascade-matching fix it depends on), with two deliberate departures:
+ * the verdict buttons are driven to the reviewer's "1 / 3" rule instead of
+ * the original's "correct / wrong" wording, and Remarks uses stateless
+ * per-line "＋ Add" buttons instead of the original's whole-field
+ * Adopt/Undo. Phase 4 (Single-model Reference) has not been ported into
+ * this file yet — if you need that feature today, keep using the original
+ * v0.1.83 script until it lands here.
  *
  * As of v1.3.2 Module 3 is no longer mouse-only: it has arrow-key selection
  * and keyboard relabelling, and "Adopt" is now the reversible "Swap" (S). The
  * cursor logic behind those arrows is shared with Module 1 via TransCursor —
- * the second sanctioned piece of cross-module code besides Utils, so
- * AGENTS.md §3's "modules stay behaviorally isolated" rule now has two
- * exceptions rather than one. Also new in v1.3.2: Space no longer submits
+ * the second sanctioned piece of cross-module code besides Utils, so the
+ * modules-stay-isolated rule now has two exceptions rather than one. Also
+ * new in v1.3.2: Space no longer submits
  * while a populated translation is under-labelled (B toggles that check), and
  * the Remarks field grows to fit its content instead of scrolling internally.
  *
@@ -47,16 +46,49 @@
  * selection intersects instead, so a full-translation selection quotes
  * cleanly while a selection spanning two translations is still rejected.
  *
+ * v1.3.4 turned the binary submit blocker into a 3-way check that cycles
+ * with Z (was B): Label Check (today's old behavior — block on incomplete,
+ * let a clean Enter through untouched), Submit Check (same blocking, but a
+ * clean Enter also presses Space for you, actually submitting), and Check
+ * Off (no check at all). A clean check now also shows a green confirmation
+ * toast instead of staying silent, so a passed check is as visible as a
+ * blocked one. Erase moved from Z to X to make room; Confusing stays on C.
+ * The Remark Composer's open/close shortcut moved from R to O, and its
+ * user-facing name changed to "Remark Options" (its internal module name is
+ * unchanged). The check-cycle line moved to the top of the shortcuts legend,
+ * and the two arrow-key lines (move translation / swap column) were merged
+ * into one "Move Translation Focus" line.
+ * v1.3.5 simplified both modules' legends. In Module 1: the separate "3 3
+ * Points" / "2 2 Points → label (1–9 pick)" lines became one "1–9
+ * Label/Score Selection" line (display only — those keys are unchanged),
+ * and the P line's label changed from "Show/hide window" to "Show/hide
+ * Legend". The check mode (Label/Submit/Check Off) is now persisted across
+ * reloads instead of always resetting — a fresh session with nothing yet
+ * saved still starts on Label Check, but an existing session's mode now
+ * survives a refresh. In Module 3 (QC Compare): its keyboard-shortcuts
+ * prose paragraph was replaced with the same compact row-list style Module
+ * 1 uses, and Swap moved from S to Z (freeing S), pushing erase/clear from
+ * Z to X; P was added to toggle the help/legend panel, matching a click on
+ * its own `▸`/`▾` triangle.
+ *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
  * every value it sets is visible on screen before you submit. It never
  * touches anything you didn't ask it to.
  *
  * One deliberate exception to that, added in v1.3.2 and carried forward: the
- * submit blocker *prevents* an action rather than performing one. It only
- * ever suppresses the Enter keystroke (Space in v1.3.2) — it never finds or
- * clicks the submit button — so pressing Space, or clicking Submit with the
- * mouse, always works, and B turns the check off entirely.
+ * submit blocker *prevents* an action rather than performing one. In Label
+ * Check and Check Off mode it only ever suppresses the Enter keystroke —
+ * it never finds or clicks the submit button — so pressing Space, or
+ * clicking Submit with the mouse, always works, and Z cycles past the check
+ * entirely.
+ *
+ * A second deliberate exception, added in v1.3.4: Submit Check mode *does*
+ * drive a submission. On a clean check it synthesizes the same Space
+ * keypress your own hand would send — but only after the identical
+ * label-completeness check the other two modes use, and only as a direct,
+ * visible result of your own Enter press. Never on a timer, never silently,
+ * and never in the other two modes.
  */
 
 (function () {
@@ -66,7 +98,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.3';
+  const SCRIPT_VERSION = 'v1.3.5';
 
   // ======================================================================
   // Shared utilities
@@ -189,6 +221,25 @@
         return ['text', 'search', 'email', 'number', 'password', 'url', 'tel'].includes(t);
       }
       return false;
+    },
+
+    // Collapse repeated calls to `fn` (no args) onto the next animation
+    // frame — at most one real call per frame no matter how many times the
+    // returned function is invoked before then. For handlers hung off a
+    // per-keystroke event (input/scroll) that do real DOM reads (offsetTop,
+    // scrollHeight, getComputedStyle) or DOM writes, calling the underlying
+    // work synchronously on every event forces a layout recalculation once
+    // per character typed — on a long field that's the difference between
+    // smooth typing and visible stutter. Fixed origin: added after the
+    // Remarks auto-grow (see startRemarksAutoGrow) and Module 3's live
+    // highlight sync turned out to stack their per-keystroke DOM work.
+    rafThrottle(fn) {
+      let scheduled = false;
+      return function () {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => { scheduled = false; fn(); });
+      };
     },
   };
 
@@ -377,12 +428,22 @@
 
     injectStyle();
 
+    // rAF-throttled: `grow()` reads scrollHeight (forces layout) and writes
+    // an inline height back — real work, not just a flag flip. Module 2's
+    // composer mirrors every keystroke into this same field
+    // (RemarkComposer's `previewEl` input handler), so without throttling,
+    // a single character typed *in the composer popover* was forcing this
+    // field's layout to recalculate too, once per keystroke. Coalescing to
+    // one call per animation frame keeps typing smooth regardless of how
+    // many input events land in that frame.
+    const scheduleGrow = Utils.rafThrottle(grow);
+
     // One delegated capture-phase listener covers every write path at once:
     // a person typing, and every programmatic write, since setNativeValue
     // dispatches `input` (it has to, for React to see the change at all).
     document.addEventListener('input', (e) => {
       const t = e.target;
-      if (t && t.tagName === 'TEXTAREA' && t.closest && t.closest('[data-module-name="Remarks"]')) grow();
+      if (t && t.tagName === 'TEXTAREA' && t.closest && t.closest('[data-module-name="Remarks"]')) scheduleGrow();
     }, true);
 
     // The content is unchanged but the wrap point moves, so the height must
@@ -405,9 +466,10 @@
   // MODULE 1: Scoring Shortcuts
   //
   // Lets an annotator score any of the 7 translations from the keyboard
-  // instead of mousing into a dropdown for each one. See AGENTS.md §4.1
-  // for the full plain-English explanation of every shortcut and the
-  // reasoning behind the trickier parts of this module.
+  // instead of mousing into a dropdown for each one. See README.md's
+  // "Shortcuts" and "How it stays careful" sections for the full
+  // plain-English explanation of every shortcut and the reasoning behind
+  // the trickier parts of this module.
   // ======================================================================
   function ScoringShortcuts(Utils) {
     const TAG = '[Scoring Shortcuts / 打分快捷键]';
@@ -421,9 +483,9 @@
       keyScore3: '3',
       keyScore2: '2',
       keyConfusing: 'c', // case-insensitive
-      keyErase: 'z',        // clear the active translation's score; stays on the same translation
+      keyErase: 'x',         // clear the active translation's score; stays on the same translation
       keyToggleWindow: 'p', // show/hide the whole shortcuts panel
-      keyToggleBlock: 'b',  // turn the submit blocker on/off (see blockEnabled)
+      keyCycleCheck: 'z',   // cycles the submit check: Label Check → Submit Check → Check Off (see CHECK_MODES)
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
       pathKey2: '2 Points',
       pathKeyConfusing: 'Confusing',
@@ -435,11 +497,21 @@
 
     // ---------- Runtime state ----------
     let enabled = true;       // master on/off switch for the shortcuts
-    // Whether Enter is blocked while any populated translation is still
-    // incompletely labelled. Session-only on purpose — deliberately NOT
-    // persisted alongside the other trans-tool:nova-score-* keys, so this
-    // can never leave a later session quietly unblocked. Toggled with B.
-    let blockEnabled = true;
+    // The submit check's 3-way mode: whether/how Enter is held back while any
+    // populated translation is still incompletely labelled. Persisted across
+    // reloads (SCORE_CHECK_KEY, alongside the other trans-tool:nova-score-*
+    // keys — see the Panel dragging/resizing/persistence section below) so a
+    // reload mid-row doesn't silently drop you back into Label Check. A
+    // brand-new session with nothing yet in localStorage still starts at
+    // Label Check ('label' is index 0, and loadSavedCheckModeIdx() falls
+    // back to 0 when nothing's stored) — only an *existing* saved mode
+    // survives a refresh, never a fresh install/first run. Cycled with Z
+    // (CFG.keyCycleCheck); loaded in start() and saved on every cycle.
+    //   'label'  — block on incomplete, let a clean Enter through untouched (today's default behavior)
+    //   'submit' — same blocking, but a clean Enter also synthesizes Space to actually submit
+    //   'off'    — no check at all, Enter always proceeds untouched
+    const CHECK_MODES = ['label', 'submit', 'off'];
+    let checkModeIdx = 0; // overwritten in start() from SCORE_CHECK_KEY if a saved mode exists
     let lastRowSig = '';      // fingerprint of the previous row's source text, to detect a row change
     let queue = [];           // pending score requests, strictly in the order keys were pressed
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
@@ -571,6 +643,24 @@
       return getScoreModules().filter((m) => !isLabelComplete(m)).map(transNumberOf);
     }
 
+    // ---- Submit Check: synthesize the platform's native Space submit ----
+    // Space (not Enter) is the platform's real submit key — see the Enter
+    // handler's comment below. Submit Check mode fires this once the check
+    // passes, so a clean Enter both checks and submits in one press. Fires a
+    // full keydown+keyup pair, bubbling, the same "real sequence of events"
+    // approach Utils.fireMouse uses for synthetic mouse input. Targets
+    // document.activeElement (falling back to document) since that's what a
+    // real Space press would be scoped to — this is the one piece of this
+    // feature that can only be confirmed against the live site; if it
+    // doesn't trigger a submission, check the platform's own Space listener
+    // in devtools for its actual target/expected event shape.
+    function dispatchNativeSpace() {
+      const target = document.activeElement || document;
+      const opts = { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent('keydown', opts));
+      target.dispatchEvent(new KeyboardEvent('keyup', opts));
+    }
+
     // A fingerprint for "which row am I on" — the source text is always
     // present and different per row, so a change in it means the page has
     // navigated to a new row and per-row state (the cursor, etc.) should reset.
@@ -638,14 +728,22 @@
         }
         #tl-toast.tl-toast-show { opacity: 1; }
         #tl-toast b { color: #c92a2a; }
-        #tl-toast .tl-toast-sub { display: block; margin-top: 5px; font-size: 12px; color: #a1690a; }`;
+        #tl-toast .tl-toast-sub { display: block; margin-top: 5px; font-size: 12px; color: #a1690a; }
+        /* Pass variant — a check that succeeded, not one that blocked. Kept as a
+           class toggle on the same #tl-toast element rather than a second toast
+           system, so both variants share position/sizing/timer logic. */
+        #tl-toast.tl-toast-ok { background: #ebfbee; color: #2b8a3e; border-color: #2f9e44; }
+        #tl-toast.tl-toast-ok b { color: #2b8a3e; }
+        #tl-toast.tl-toast-ok .tl-toast-sub { color: #2f9e44; }`;
       document.head.appendChild(s);
     }
 
     // Show a transient centered message. Re-shown while already visible just
-    // resets the timer, so holding Enter doesn't stack toasts.
+    // resets the timer, so holding Enter doesn't stack toasts. `variant`
+    // 'warn' (default) is the amber blocked-submission style; 'ok' is the
+    // green pass-confirmation style (see .tl-toast-ok above).
     let toastTimer = null;
-    function showToast(html, ms = 2600) {
+    function showToast(html, ms = 2600, variant = 'warn') {
       let t = document.getElementById('tl-toast');
       if (!t) {
         injectStyle();
@@ -654,6 +752,7 @@
         document.body.appendChild(t);
       }
       t.innerHTML = html;
+      t.classList.toggle('tl-toast-ok', variant === 'ok');
       // Next frame, so the opacity transition actually runs on first show.
       requestAnimationFrame(() => t.classList.add('tl-toast-show'));
       clearTimeout(toastTimer);
@@ -1051,28 +1150,43 @@
       // Enter is the platform's submit (Space was, through v1.3.2 — moved
       // here in v1.3.3 so Space goes back to being the platform's untouched
       // native submit key). Hold Enter back while any populated translation
-      // is still incompletely labelled.
+      // is still incompletely labelled, per the current check mode.
       //
       // Placed after the inTextEntry() guard on purpose, so Enter stays a
       // literal newline whenever a text field has focus — never intercept
       // Enter while someone is typing a remark.
       //
-      // We only ever suppress the keystroke; we never look for or click the
-      // submit button. That's why clicking Submit with the mouse, or
-      // pressing Space, still works as an override, for free.
+      // Label Check and Submit Check share the same block-on-incomplete
+      // logic; they only differ on a clean pass — Label Check just lets the
+      // (inert) Enter through as before, Submit Check also fires a
+      // synthetic Space to actually submit (see dispatchNativeSpace, and
+      // the docstring's v1.3.4 note on this being a second deliberate
+      // exception to "only ever suppress, never click/press for you").
       if (e.key === 'Enter') {
-        if (!blockEnabled) return;
+        const checkMode = CHECK_MODES[checkModeIdx];
+        if (checkMode === 'off') return;
         const bad = incompleteTransNumbers();
-        if (!bad.length) return; // everything labelled → the platform's Enter proceeds untouched
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const list = bad.map((n) => `Trans${n}`).join(', ');
-        showToast(
-          `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
-          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
-          + ` override (<span class="tl-kbd">${CFG.keyToggleBlock.toUpperCase()}</span> turns this check off).</span>`
-        );
-        setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+        if (bad.length) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const list = bad.map((n) => `Trans${n}`).join(', ');
+          showToast(
+            `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
+            + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+            + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
+          );
+          setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+          return;
+        }
+        // Everything labelled — a clean pass, worth confirming instead of staying silent.
+        showToast('✅ Check passed — every populated translation is labelled.', 1600, 'ok');
+        if (checkMode === 'submit') {
+          e.preventDefault(); // this Enter's own effect is replaced by the synthesized Space below
+          dispatchNativeSpace();
+          setStatus('✅ Check passed — submitted');
+        } else {
+          setStatus('✅ Check passed');
+        }
         return;
       }
 
@@ -1085,17 +1199,22 @@
         return;
       }
 
-      // Toggle the submit blocker. Also checked before the enabled gate —
-      // if the blocker is holding Enter back, you must be able to switch it
-      // off without first turning the shortcuts back on.
-      if (e.key.toLowerCase() === CFG.keyToggleBlock) {
+      // Cycle the submit check mode. Also checked before the enabled gate —
+      // if a check is holding Enter back, you must be able to change it
+      // without first turning the shortcuts back on.
+      if (e.key.toLowerCase() === CFG.keyCycleCheck) {
         e.preventDefault();
-        blockEnabled = !blockEnabled;
-        updateBlockBadge();
-        showToast(blockEnabled
-          ? '🛡️ Submit check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>'
-          : '⚠️ Submit check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>');
-        setStatus(`Submit check ${blockEnabled ? 'ON' : 'OFF'}`);
+        checkModeIdx = (checkModeIdx + 1) % CHECK_MODES.length;
+        saveCheckModeIdx();
+        updateCheckBadge();
+        const mode = CHECK_MODES[checkModeIdx];
+        const msgs = {
+          label: '🛡️ Label Check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>',
+          submit: '⚔️ Submit Check <b>ON</b><span class="tl-toast-sub">On a clean check, Enter also submits (presses Space for you) automatically.</span>',
+          off: '⚠️ Check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>',
+        };
+        showToast(msgs[mode]);
+        setStatus(`Check mode: ${mode === 'label' ? 'Label Check' : mode === 'submit' ? 'Submit Check' : 'Check OFF'}`);
         return;
       }
 
@@ -1140,7 +1259,7 @@
     // Status panel
     // ====================================================================
 
-    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null, blockBadgeEl = null;
+    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null, checkBadgeEl = null;
     let collapsed = false;    // true while minimized to the bottom-left pill
     let naturalWidth = null;  // the panel's default width, measured once on first render — resize can shrink below this but never grow past it
 
@@ -1149,15 +1268,23 @@
       log(msg);                                 // echoed to console only when DEBUG is on
     }
 
-    // The submit-blocker's state, in the panel header. Worth showing: if
-    // Enter stops working, "why" should be answerable by looking rather than
-    // by remembering whether you pressed B.
-    function updateBlockBadge() {
-      if (!blockBadgeEl) return;
-      blockBadgeEl.textContent = blockEnabled ? '🛡️ Submit check' : '⚠️ Check OFF';
-      blockBadgeEl.style.background = blockEnabled ? '#ebfbee' : '#fff0f0';
-      blockBadgeEl.style.color = blockEnabled ? '#2b8a3e' : '#c92a2a';
-      blockBadgeEl.style.border = `1px solid ${blockEnabled ? '#b2f2bb' : '#ffc9c9'}`;
+    // The submit check's mode, in the panel header. Worth showing: if Enter
+    // stops working (or starts submitting for you), "why" should be
+    // answerable by looking rather than by remembering how many times you
+    // pressed Z. Submit Check uses the panel's own accent blue so it reads
+    // as a deliberate "on-brand" third state, not an arbitrary new color.
+    function updateCheckBadge() {
+      if (!checkBadgeEl) return;
+      const styles = {
+        label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
+        submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
+        off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
+      };
+      const s = styles[CHECK_MODES[checkModeIdx]];
+      checkBadgeEl.textContent = s.text;
+      checkBadgeEl.style.background = s.bg;
+      checkBadgeEl.style.color = s.fg;
+      checkBadgeEl.style.border = `1px solid ${s.border}`;
     }
 
     // Shows which translations on this row were skipped for having no text.
@@ -1208,7 +1335,7 @@
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
           <span style="font-weight:600;white-space:nowrap;">⌨️ Scoring Shortcuts</span>
           <span style="font-size:11px;background:#ffe066;color:#664d00;padding:1px 7px;border-radius:6px;font-weight:700;">${VERSION}</span>
-          <span id="tl-block-badge" title="Enter won't submit until every populated translation has a complete label (B toggles)" style="
+          <span id="tl-check-badge" title="Z cycles: Label Check → Submit Check → Check Off" style="
             font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
           <span style="flex:1;"></span>
           <button id="tl-score-toggle" style="
@@ -1219,15 +1346,13 @@
             font-weight:700;cursor:pointer;line-height:1;white-space:nowrap;">—</button>
         </div>
         <div id="tl-score-body" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;color:#4b5563;font-size:12px;">
+          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Cycle check mode</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">C</span> Confusing</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Erase score</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">3</span> 3 Points</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">2</span> 2 Points → label (<span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> pick)</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span> move trans</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> swap column</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">R</span> Remark composer</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
-          <span style="white-space:nowrap;"><span class="tl-kbd">B</span> Submit check on/off</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">X</span> Erase score</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> Label/Score Selection</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span><span class="tl-kbd">←</span><span class="tl-kbd">→</span> Move Translation Focus</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">O</span> Remark Options</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide Legend</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
           <span id="tl-score-status" style="font-size:12px;color:#3b5bdb;flex:1;min-height:16px;"></span>
@@ -1239,8 +1364,8 @@
       skippedEl = p.querySelector('#tl-score-skipped');
       toggleBtn = p.querySelector('#tl-score-toggle');
       toggleBtn.addEventListener('click', () => setEnabled(!enabled));
-      blockBadgeEl = p.querySelector('#tl-block-badge');
-      updateBlockBadge();
+      checkBadgeEl = p.querySelector('#tl-check-badge');
+      updateCheckBadge();
 
       // Measure the panel's natural (un-resized) width before anything can
       // override it — this becomes the resize handle's upper bound, so you
@@ -1287,7 +1412,22 @@
     const SCORE_POS_KEY = 'trans-tool:nova-score-pos-v3';
     const SCORE_MIN_KEY = 'trans-tool:nova-score-min-v1';
     const SCORE_SIZE_KEY = 'trans-tool:nova-score-size-v2';
+    const SCORE_CHECK_KEY = 'trans-tool:nova-score-check-v1';
     const MIN_PANEL_W = 260; // small enough to still show the header row and its buttons
+
+    // Load the saved check mode, if any. Falls back to index 0 ('label')
+    // whenever nothing's stored yet — that's what makes a fresh install
+    // start on Label Check while an existing session's mode still survives
+    // a reload.
+    function loadSavedCheckModeIdx() {
+      try {
+        const idx = CHECK_MODES.indexOf(localStorage.getItem(SCORE_CHECK_KEY));
+        return idx === -1 ? 0 : idx;
+      } catch (e) { return 0; }
+    }
+    function saveCheckModeIdx() {
+      try { localStorage.setItem(SCORE_CHECK_KEY, CHECK_MODES[checkModeIdx]); } catch (e) {}
+    }
 
     function applySavedPos(p) {
       try {
@@ -1389,6 +1529,7 @@
     // ====================================================================
 
     let settleTimer = null;
+    let autoAdvanceTimer = null; // pending auto-Enter for an empty row in Submit Check mode (see below)
     function onMutate() {
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
@@ -1404,6 +1545,20 @@
           const nums = getScoreModules().map(transNumberOf);
           log(`Scoreable Trans on this row: ${nums.join(', ')} (empty ones auto-skipped)`);
           updateSkippedLine();
+          // Nothing to score on this row and Submit Check is on: a real Enter
+          // press would pass its completeness check vacuously anyway, so
+          // press it for the user after a 1s pause instead of leaving them
+          // stuck on a row with nothing to do. Goes through the exact same
+          // Enter handling as a real keypress (completeness check, toast,
+          // dispatchNativeSpace) — this never bypasses that check, it just
+          // supplies the keypress. Cleared on every row change so a stale
+          // timer can never fire against a row it wasn't scheduled for.
+          clearTimeout(autoAdvanceTimer);
+          if (!nums.length && CHECK_MODES[checkModeIdx] === 'submit') {
+            autoAdvanceTimer = setTimeout(() => {
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+            }, 1000);
+          }
           if (enabled) setStatus(`New row · Trans${nums[0] || 1}`);
         }
         if (enabled) applyHighlight();
@@ -1419,6 +1574,7 @@
       // shortcuts/panel stay out of the way there to avoid conflicting with
       // that workflow.
       if (/\/quality_/.test(location.href)) { log('QC page → scoring module not enabled (质检页 → 打分模块不启用)'); return; }
+      checkModeIdx = loadSavedCheckModeIdx(); // survives a reload; falls back to Label Check on a fresh session
       injectStyle();
       injectPanel();
       lastRowSig = getRowSig();
@@ -1439,10 +1595,9 @@
   //
   // Lets an annotator build a structured remark by clicking translation
   // titles and category chips instead of typing full sentences by hand.
-  // This is a redesign of the original module, not a faithful port — see
-  // AGENTS.md §7 for exactly what changed (quoting works differently) and
-  // why. See AGENTS.md §4.2 for the shared background (chip categories,
-  // the React-controlled-textarea write, etc.).
+  // This is a redesign of the original module, not a faithful port —
+  // quoting is select-then-Q (plain browser selection, no drag-takeover/
+  // word-snapping) instead of the original's automatic-on-mouseup.
   // ======================================================================
   function RemarkComposer(Utils) {
     const RTAG = '[Remark Composer / Remark]';
@@ -1759,7 +1914,7 @@
         // the selection. Put the cursor in the composer box so typing
         // continues there, rather than just leaving a hint and doing nothing.
         focusEditEnd();
-        setHint('Nothing selected — jumped into the Remark Composer box. Select text in a translation first to quote it.');
+        setHint('Nothing selected — jumped into the Remark Options box. Select text in a translation first to quote it.');
         return false;
       }
       const range = selObj.rangeCount ? selObj.getRangeAt(0) : null;
@@ -2032,7 +2187,7 @@
       p.id = 'rmd-popover';
       p.innerHTML = `
         <div id="rmd-head">
-          <span class="rmd-title">📝 Remark Composer</span>
+          <span class="rmd-title">📝 Remark Options</span>
           <span style="flex:1;"></span>
           <button id="rmd-settings-btn" title="Settings">⚙</button>
           <button id="rmd-clear-btn" title="Clear">Clear</button>
@@ -2103,10 +2258,10 @@
         return;
       }
 
-      if (typing()) return; // don't hijack R/Q while typing anywhere, including our own edit box
+      if (typing()) return; // don't hijack O/Q while typing anywhere, including our own edit box
 
       const k = e.key.toLowerCase();
-      if (k === 'r') {
+      if (k === 'o') {
         e.preventDefault();
         toggle();
       } else if (k === 'q' && active) {
@@ -2189,16 +2344,16 @@
   // outstanding.
   //
   // This is a faithful, freshly re-derived port of the original v0.1.83
-  // script's Module 3 (docs/for_reference/==UserScript==(v1.83) copy.txt,
-  // lines 1343–2193) — see AGENTS.md §4.3 for the full design record,
-  // including the `canonPath` cascade-matching fix this module depends on
-  // (get this wrong and multi-level adopts silently fail while single-level
-  // ones look fine). Two deliberate departures from the original, both
-  // requested: the verdict buttons are driven to "1" / "3" instead of
-  // "correct" / "wrong", and Remarks uses stateless per-line "＋ Add"
-  // buttons instead of the original's whole-field Adopt/Undo. No panel `P`
-  // toggle, no resize, no verdict-reload fallback — see AGENTS.md §7 for
-  // why those were tried in an earlier build and deliberately left out here.
+  // script's Module 3 (lines 1343–2193 of that script, kept outside this
+  // repo) — see `canonPath` below for the cascade-matching fix
+  // this module depends on (get this wrong and multi-level adopts silently
+  // fail while single-level ones look fine). Two deliberate departures from
+  // the original, both requested: the verdict buttons are driven to "1" /
+  // "3" instead of "correct" / "wrong", and Remarks uses stateless
+  // per-line "＋ Add" buttons instead of the original's whole-field
+  // Adopt/Undo. No resize handle, and no verdict-reload fallback — an
+  // earlier build tried both; the reload fallback had a real loop bug (see
+  // README.md's v1.3.0 note) and was deliberately left out of this rebuild.
   // ======================================================================
   function QCCompare(Utils) {
     const TAG = '[QC Compare / 质检对比]';
@@ -2285,8 +2440,8 @@
     // ====================================================================
     // Reading the page — this module keeps its own copies (not shared with
     // Module 1/2) of anything that isn't a generic DOM helper already in
-    // Utils, matching the file's existing "modules stay behaviorally
-    // isolated" rule (AGENTS.md §3).
+    // Utils, matching the file's "modules stay behaviorally isolated" rule
+    // (README.md's "Ground rules" section).
     // ====================================================================
 
     function nextFrame() { return new Promise((r) => requestAnimationFrame(() => r())); }
@@ -3307,9 +3462,13 @@
         <div id="qc-cursor"></div>
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
-          <div class="qc-hint">
-            <span style="color:#c92a2a;font-weight:600;">Red Notices</span> indicate where Annotator&nbsp;2 differs from 1 — that's what's left to reconcile. \nClick the "<span style="color:#1c7ed6;font-weight:600;">Swap →</span>" button to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an "<span style="color:#1c7ed6;font-weight:600;text-decoration:underline;">Undo</span>" button. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. \n<b>Remarks</b> has been updated, but be not afraid! Annotator&nbsp;2's remarks are listed line by line, Click the "<span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span>" button to append that line to the end of Annotator 1's Remarks; "Add" just pastes selected row of text at end of the Remarks and will not replace, reorder, or overwrite anything written.
-            \n<b>Keyboard</b> (new): <span class="qc-kbd">↑</span><span class="qc-kbd">↓</span> select a translation, <span class="qc-kbd">←</span><span class="qc-kbd">→</span> switch column (Trans1-3 / Trans4-7). <span class="qc-kbd">S</span> swaps the selected translation to the other annotator's value — press it again to swap back. <span class="qc-kbd">3</span> / <span class="qc-kbd">C</span> / <span class="qc-kbd">Z</span> score it 3&nbsp;Points / Confusing / clear; <span class="qc-kbd">2</span> then <span class="qc-kbd">1</span>-<span class="qc-kbd">9</span><span class="qc-kbd">0</span> picks a 2&nbsp;Points label, <span class="qc-kbd">Esc</span> cancels. Shortcuts are off while you're typing in a text field, and edits only apply on the Annotator&nbsp;1 tab.
+          <div class="qc-hint" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;">
+            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Labels</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">C</span> Confusing</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">X</span> Clear Label</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">1</span>–<span class="qc-kbd">9</span> Label/Score Selection</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">↑</span><span class="qc-kbd">↓</span><span class="qc-kbd">←</span><span class="qc-kbd">→</span> Move Translation Focus</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">P</span> Show/Hide Legend</span>
           </div>
         </div>`;
       document.body.appendChild(p);
@@ -3444,8 +3603,9 @@
       }
 
       const k = e.key.toLowerCase();
-      if (k === 's') { e.preventDefault(); swap(n); return; }
-      if (k === 'z') { e.preventDefault(); eraseScore(n); return; }
+      if (k === 'p') { e.preventDefault(); helpOpen = !helpOpen; applyHelp(); return; }
+      if (k === 'z') { e.preventDefault(); swap(n); return; }
+      if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
       if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
     }
 
@@ -3482,12 +3642,26 @@
       // Typing / scrolling in the platform Remarks/Rewrite field -> live-sync the Trans N highlight overlay.
       const isFieldTA = (el) => el && el.tagName === 'TEXTAREA' && el.closest
         && el.closest('[data-module-name="Remarks"], [data-module-name="Rewrite"]');
-      document.addEventListener('input', (e) => { if (isFieldTA(e.target)) { syncFieldHighlights(); updateWarn(); } }, true);
-      document.addEventListener('scroll', (e) => { if (isFieldTA(e.target)) syncFieldHighlights(); }, true);
+      // rAF-throttled: syncFieldHighlights() calls getComputedStyle and
+      // rebuilds the overlay's innerHTML, and updateWarn() re-derives
+      // get3PtRemarkViolations() (its own DOM read across every Trans score)
+      // a second time on top of the copy syncFieldHighlights already computed
+      // internally — real, non-trivial work that was previously re-run in
+      // full on every single keystroke. Coalescing both to one pass per
+      // animation frame is what actually fixes the typing lag; nothing about
+      // what gets synced changes, only how often the sync work runs.
+      const scheduleFieldSync = Utils.rafThrottle(() => { syncFieldHighlights(); updateWarn(); });
+      const scheduleHLOnly = Utils.rafThrottle(syncFieldHighlights);
+      document.addEventListener('input', (e) => { if (isFieldTA(e.target)) scheduleFieldSync(); }, true);
+      document.addEventListener('scroll', (e) => { if (isFieldTA(e.target)) scheduleHLOnly(); }, true);
       // The Remarks field grows to fit its content (see startRemarksAutoGrow).
       // The highlight overlay is absolutely positioned and sized from the
       // textarea's own offsetWidth/offsetHeight, so it has to be re-measured
-      // whenever that height changes or it drifts off the text.
+      // whenever that height changes or it drifts off the text. Left
+      // un-throttled here on purpose: GROWN_EVENT only fires when grow()
+      // (itself already rAF-throttled) actually changed the height, so this
+      // is already at most once per frame — throttling it again would just
+      // add a frame of lag between the resize and the overlay catching up.
       document.addEventListener(GROWN_EVENT, () => syncFieldHighlights());
       document.addEventListener('keydown', onKeyDown, true); // capture, matching Module 1
       new MutationObserver(onMutate).observe(document.body, { childList: true, subtree: true });
