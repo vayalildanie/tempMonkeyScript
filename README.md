@@ -9,6 +9,12 @@ The script never changes what gets submitted — it only automates the mouse
 clicks a human would otherwise make by hand, and shows its work clearly
 enough that the annotator can see and override anything before submitting.
 
+One deliberate exception, added in `v1.3.2` (and moved onto a different key in
+`v1.3.3`): the submit blocker *prevents* an action rather than performing one.
+It only suppresses the Enter keystroke — it never finds or clicks the submit
+button — so pressing Space, or clicking Submit with the mouse, always works,
+and `B` turns the check off entirely.
+
 It's one file, single-install (open Tampermonkey, paste the script), with
 `@grant none` — it never gains any Tampermonkey API access beyond the normal
 browser DOM, by design.
@@ -26,8 +32,12 @@ page:
    category chips instead of typing full sentences by hand.
 3. **QC Compare** — for the separate quality-check pass: shows both
    annotators' scores/text side by side (the platform only shows one at a
-   time) and lets a reviewer adopt or undo the other annotator's value with
-   one click.
+   time) and lets a reviewer swap to the other annotator's value, or relabel
+   from scratch, by keyboard or with one click.
+
+It also holds back Enter-to-submit while a populated translation is still
+missing a complete label, and keeps the Remarks field as tall as its content
+so a long remark never hides inside a scrollbox.
 
 ## Install
 
@@ -37,6 +47,94 @@ page:
    the file header.
 
 ## Version history
+
+### `v1.3.3` — Submit check moved to Enter, full-translation quoting fixed
+
+Two changes, both refinements of v1.3.2 features rather than new surface.
+
+**The submit blocker now holds back Enter instead of Space.** Space goes back
+to being the platform's untouched native submit key, exactly like before
+`v1.3.2`. Same completeness check, same toast, same `B` toggle — only the key
+it's watching changed. (Announced badge text, toast copy, and the panel
+tooltip were all updated to match.)
+
+**Quoting an entire translation (`Q`) now works.** The check that a selection
+stays inside one translation used to walk `anchorNode`/`focusNode` up to the
+nearest `.preview-content` via `.closest()` — which only ever walks *upward*.
+Selecting a whole translation (dragging past the last character, or releasing
+in the blank space below the last line) is a real `Selection`/`Range` quirk:
+the browser resolves that boundary to `.preview-content`'s *parent*, not a
+node inside it, so `.closest()` could never recognize it and the quote was
+rejected as "outside the translation" — even though only one translation was
+ever touched. Fixed by checking which `TransN` *container* the selection's
+`Range` intersects (`Range.intersectsNode`) instead of which `.preview-content`
+its endpoints happen to resolve to. A selection that actually spans two
+translations is still rejected, since a real cross-translation drag
+intersects two distinct containers. Verified against the exact escaped-
+boundary case in a real browser (not just reasoned about) — see the commit
+for the repro.
+
+**Next up:** the file header points readers at `AGENTS.md` "in this repo" for
+the full feature reference, but it isn't actually tracked in git and its
+content has drifted — it still describes Module 3 as having no keyboard
+shortcuts of its own, which stopped being true in `v1.3.2`. Reconciling
+`AGENTS.md` with the shipped code (and deciding whether it belongs in the
+repo at all) is the plan for `v1.3.4`, before that release adds anything new
+on top.
+
+### `v1.3.2` — Submit blocker, QC keyboard, Swap, full-height Remarks
+
+Four changes, plus one refactor that made two of them cheap.
+
+**Space no longer submits an under-labelled row.** Score and label are one
+cascader whose value is a path, so it's easy to stop on a non-leaf — bare
+`2 Points` — and submit without noticing. Space is now held back while any
+populated translation is incomplete, with a toast naming which ones. `B`
+toggles the check (session-only, so a refresh restores it).
+
+Two catches, both exact string comparisons: nothing selected, or exactly
+`2 Points`. Depth deliberately isn't counted — the display joins levels with
+`" / "` *and* some labels contain `" / "` themselves, so a complete
+`2 Points / Authenticity / Unauthentic Vocabulary / Collocations` has *more*
+separators than an incomplete `2 Points / Authenticity`. The check is derived
+from the live DOM rather than tracked as a flag, so a label set with the mouse
+counts exactly like one set with `0`–`9`. The script only suppresses the
+keystroke — it never looks for or clicks the submit button — so clicking
+Submit with the mouse is an override for free.
+
+**QC Compare has a keyboard.** It was mouse-only by design; now `↑`/`↓` select
+a translation and `←`/`→` toggle column (Trans1–3 / Trans4–7), matching Module
+1 exactly, plus `3`/`C`/`Z`/`2` to relabel and `0`–`9` to pick a 2-Points
+label. Nothing had to be arbitrated: Modules 1 and 2 both bail out on
+`/quality_` pages, so the keyboard there was entirely unclaimed. Label mode is
+derived from whether a menu is actually open rather than tracked in a flag —
+without that, `2` then `3` could never reach label item #3.
+
+**Adopt is now Swap, bound to `S`.** `adopted`/`undoAdopt` were already a
+clean toggle, so one key does both directions. Renamed in the UI only; the
+function names, data attributes and CSS classes keep `adopt`/`undo`, since
+renaming those would churn the click delegation for nothing.
+
+**The Remarks field grows to fit its content** on both pages, instead of
+scrolling inside a small box. Growth is unbounded on purpose — a cap would
+reintroduce internal scrolling for exactly the long remarks this fixes. This
+needed NOVA's own fixed module height relaxed, and it retires `v1.3.1`'s
+scroll-the-field-to-the-new-line step, which is meaningless once nothing
+scrolls.
+
+**Refactor:** the active-translation cursor is now one shared `TransCursor`
+instead of a copy in each module — this is what let Module 3's arrows match
+Module 1's semantics for free. It deals only in Trans numbers, never indices,
+which is forced rather than cosmetic: Module 3 re-queries its score modules on
+demand and the platform's re-renders replace those nodes, so an index into any
+snapshot goes stale by construction. It's the second piece of cross-module
+code after `Utils`.
+
+Migrating Module 1 onto it fixed a latent bug in `commitLabelAndAdvance`,
+which read a value back by index into one array but advanced by index into a
+freshly re-read one — a list shift mid-label-pick could have landed the
+advance on the wrong translation. Carrying the Trans number instead makes that
+mismatch impossible to express.
 
 ### `v1.3.1` — Module 3: Remarks + Add now focuses the field it just wrote to
 

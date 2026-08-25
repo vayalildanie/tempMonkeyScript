@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.3.1
+// @version      1.3.3
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -27,10 +27,36 @@
  * not been ported into this file yet — if you need that feature today, keep
  * using the original v0.1.83 script until it lands here.
  *
+ * As of v1.3.2 Module 3 is no longer mouse-only: it has arrow-key selection
+ * and keyboard relabelling, and "Adopt" is now the reversible "Swap" (S). The
+ * cursor logic behind those arrows is shared with Module 1 via TransCursor —
+ * the second sanctioned piece of cross-module code besides Utils, so
+ * AGENTS.md §3's "modules stay behaviorally isolated" rule now has two
+ * exceptions rather than one. Also new in v1.3.2: Space no longer submits
+ * while a populated translation is under-labelled (B toggles that check), and
+ * the Remarks field grows to fit its content instead of scrolling internally.
+ *
+ * v1.3.3 moved that check off Space and onto Enter — Space is back to being
+ * the platform's untouched native submit key, and Enter is now the one held
+ * back while a populated translation is under-labelled (B still toggles it).
+ * The Remark Composer's quote selection (Q) was also loosened: selecting an
+ * entire translation could land the browser's selection boundary just
+ * outside `.preview-content` (a real Selection/Range quirk, not a typo) and
+ * get rejected as "outside the translation" even though only one translation
+ * was ever touched — it now checks which translation *container* the
+ * selection intersects instead, so a full-translation selection quotes
+ * cleanly while a selection spanning two translations is still rejected.
+ *
  * Safety note (unchanged from the original): this script only "clicks for
  * you" — every action it takes is the same thing your mouse would do, and
  * every value it sets is visible on screen before you submit. It never
  * touches anything you didn't ask it to.
+ *
+ * One deliberate exception to that, added in v1.3.2 and carried forward: the
+ * submit blocker *prevents* an action rather than performing one. It only
+ * ever suppresses the Enter keystroke (Space in v1.3.2) — it never finds or
+ * clicks the submit button — so pressing Space, or clicking Submit with the
+ * mouse, always works, and B turns the check off entirely.
  */
 
 (function () {
@@ -40,7 +66,7 @@
   // previously out of sync (the @version header said 1.2.4 while Module 1's
   // own badge constant still said v1.2.1). Bump this and the @version header
   // together; every module badge reads from here instead of keeping its own.
-  const SCRIPT_VERSION = 'v1.3.1';
+  const SCRIPT_VERSION = 'v1.3.3';
 
   // ======================================================================
   // Shared utilities
@@ -117,7 +143,263 @@
     escapeHtml(s) {
       return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     },
+
+    // Grow a textarea to exactly fit its content, so it never scrolls
+    // internally. Setting height to 'auto' first matters: scrollHeight
+    // reports the *current* box height once it's been pinned in px, so
+    // without the reset the field could grow but never shrink back.
+    //
+    // Returns true if the height actually changed, so callers can skip
+    // downstream work (overlay resync) when nothing moved.
+    // Set with `!important` because the platform's own stylesheet pins this
+    // field's height, and a normal inline declaration loses to an author
+    // `!important` rule. Inline `!important` outranks both.
+    autoGrowTextarea(ta) {
+      if (!ta) return false;
+      const before = ta.style.height;
+      ta.style.setProperty('overflow-y', 'hidden', 'important');
+      ta.style.setProperty('height', 'auto', 'important');
+      const h = ta.scrollHeight;
+      if (!h) { // detached or hidden — leave it alone rather than collapse it to 0
+        if (before) ta.style.setProperty('height', before, 'important');
+        return false;
+      }
+      ta.style.setProperty('height', h + 'px', 'important');
+      return ta.style.height !== before;
+    },
+
+    // Is the user typing? Letter/number shortcuts must never fire while a
+    // text field has focus. Was previously copy-pasted in Module 1
+    // (`inTextEntry`) and Module 2 (`typing`); Module 3 needs it too now
+    // that it has a keyboard, so it lives here once.
+    //
+    // The `readOnly` early-return matters: an Ant cascader's own hidden
+    // search input is a readonly text input that takes focus whenever a
+    // dropdown opens. Treating that as "typing" would kill every shortcut
+    // for exactly as long as a label menu is open — i.e. precisely when
+    // the 0-9 label keys are needed.
+    inTextEntry() {
+      const el = document.activeElement;
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      if (el.tagName === 'TEXTAREA') return true;
+      if (el.tagName === 'INPUT') {
+        if (el.readOnly) return false;
+        const t = (el.type || '').toLowerCase();
+        return ['text', 'search', 'email', 'number', 'password', 'url', 'tel'].includes(t);
+      }
+      return false;
+    },
   };
+
+  // ======================================================================
+  // Shared: the active-translation cursor
+  //
+  // Module 1 (scoring) and Module 3 (QC compare) both let you walk the
+  // row's scoreable translations with the arrow keys, with identical
+  // semantics: ↑/↓ step, ←/→ toggle column (Trans1-3 vs Trans4-7) and land
+  // on wherever you last were in that column. That logic lives here once
+  // instead of being copy-pasted, which is how the two copies of the
+  // version constant drifted apart before (see SCRIPT_VERSION above).
+  //
+  // It deals only in Trans NUMBERS, never indices. That isn't tidiness —
+  // it's forced: Module 3 has no stable array to index into, since it
+  // re-queries `[data-module-name="TransN Score"]` on demand and the
+  // platform's re-renders replace those nodes. An index into any snapshot
+  // goes stale by construction; a number stays valid. (Module 1's index is
+  // always recoverable from a number via findIndex; the reverse isn't.)
+  //
+  // It knows nothing about either module's DOM, highlight style, or status
+  // panel — those arrive as the `onChange` and `status` callbacks.
+  // ======================================================================
+  function TransCursor({ list, onChange, status, leftMax = 3 }) {
+    let cur = null;         // the active Trans NUMBER, or null when the row has none
+    // Column memory, deliberately persisting across rows (and across
+    // reset()) — if you habitually check Trans6 first, ←/→ keeps landing
+    // there. Written in `set` rather than in either module's onChange, so
+    // both modules' ←/→ learn from every move.
+    let lastColLeft = null;
+    let lastColRight = null;
+
+    const isLeft = (n) => n <= leftMax;
+    const inCol = (n, goingRight) => (goingRight ? !isLeft(n) : isLeft(n));
+
+    // Re-anchor `cur` to the live list: keep it if still present, else fall
+    // back to the nearest lower listed number, else the first. Mutates
+    // `cur`, matching the clamping Module 1 has always done — this runs
+    // from the MutationObserver on every settle, so it's a hot path, not
+    // an edge case.
+    function resolve(nums) {
+      if (!nums.length) { cur = null; return null; }
+      if (cur !== null && nums.indexOf(cur) !== -1) return cur;
+      const lower = nums.filter((n) => cur !== null && n < cur);
+      cur = lower.length ? lower[lower.length - 1] : nums[0];
+      return cur;
+    }
+
+    // The only writer of `cur`. `scroll` is passed through to onChange so
+    // callers that only want a repaint (not a jump) can say so.
+    function set(n, { scroll = false, silent = false } = {}) {
+      if (n == null) return null;
+      cur = n;
+      if (isLeft(n)) lastColLeft = n; else lastColRight = n;
+      if (!silent && onChange) onChange(n, { scroll });
+      return n;
+    }
+
+    return {
+      get() { return cur; },
+      list() { return list(); },
+
+      // Re-anchor to the live list and repaint. This is what a module's
+      // MutationObserver settle calls.
+      sync({ scroll = false } = {}) {
+        const n = resolve(list());
+        if (n === null) { if (onChange) onChange(null, { scroll }); return null; }
+        return set(n, { scroll });
+      },
+
+      step(delta) {
+        const nums = list();
+        if (!nums.length) return null;
+        const i = Math.max(0, Math.min(nums.length - 1, nums.indexOf(resolve(nums)) + delta));
+        const n = set(nums[i], { scroll: true });
+        if (status) status(`Current: Trans${n}`);
+        return n;
+      },
+
+      // Both ← and → toggle to the other column; the direction of the key
+      // is ignored, by design. If neither the remembered slot nor a
+      // fallback is scoreable right now, stay put rather than guess.
+      toggleColumn() {
+        const nums = list();
+        if (!nums.length) return null;
+        const curN = resolve(nums);
+        if (curN === null) return null;
+        const goingRight = isLeft(curN);
+        const remembered = goingRight ? lastColRight : lastColLeft;
+        let target = (remembered !== null && inCol(remembered, goingRight)) ? remembered : null;
+        if (target === null) target = nums.find((n) => inCol(n, goingRight));
+        if (target == null) return null;              // nothing scoreable over there
+        if (nums.indexOf(target) === -1) return null; // remembered slot isn't scoreable now
+        const n = set(target, { scroll: true });
+        if (status) status(`Current: Trans${n}`);
+        return n;
+      },
+
+      set,
+
+      // Row change: go to the first scoreable translation. Column memory is
+      // intentionally NOT cleared.
+      reset({ scroll = false, silent = false } = {}) {
+        cur = null;
+        const nums = list();
+        return nums.length ? set(nums[0], { scroll, silent }) : null;
+      },
+    };
+  }
+
+  // The next Trans after `num` in a previously-captured list, or `num`
+  // itself if it was the last one. Deliberately a pure helper on a
+  // caller-supplied snapshot rather than a cursor method: the async
+  // "score, then advance" sites capture the list *before* awaiting and must
+  // advance against that same snapshot, not against a freshly re-read list.
+  TransCursor.nextIn = function (nums, num) {
+    const i = nums.indexOf(num);
+    if (i === -1 || i === nums.length - 1) return num;
+    return nums[i + 1];
+  };
+
+  // ======================================================================
+  // Shared: keep the Remarks field as tall as its content
+  //
+  // The platform's Remarks box is a small fixed-height textarea, so a remark
+  // longer than a few lines can only be re-read by scrolling inside it. Grow
+  // it to fit instead: the field never scrolls internally, and the page
+  // absorbs the extra height.
+  //
+  // Growth is deliberately unbounded. A cap would reintroduce internal
+  // scrolling for exactly the long remarks this exists to fix.
+  //
+  // Runs on both the annotation page and QC, so it lives here rather than in
+  // a module — it isn't tied to either one's lifecycle, and both pages have
+  // the same field with the same problem.
+  // ======================================================================
+  const GROWN_EVENT = 'trans-tool:remarks-grown';
+
+  function startRemarksAutoGrow(Utils) {
+    const SEL = '[data-module-name="Remarks"] textarea';
+
+    // NOVA's own layout pins the Remarks module to a fixed height with
+    // overflow:visible (it's why Module 3 inserts its compare boxes as
+    // siblings rather than children). Growing the textarea inside that box
+    // would just push content out under whatever renders next, so the
+    // module's own height constraint has to come off too.
+    //
+    // Scoped to the Remarks module only, and to the wrappers between it and
+    // the textarea — not a blanket rule — so nothing else on the page shifts.
+    function injectStyle() {
+      if (document.getElementById('tl-grow-style')) return;
+      const s = document.createElement('style');
+      s.id = 'tl-grow-style';
+      // The two exclusions are load-bearing, not tidiness. A bare
+      // `* { height: auto !important }` also matches:
+      //   - the textarea itself, whose measured height we set inline —
+      //     stylesheet !important beats a normal inline declaration, so the
+      //     blanket rule silently discarded the grow and the field rendered
+      //     at auto. The feature did nothing.
+      //   - .qc-hl, Module 3's highlight overlay, which is a sibling of the
+      //     textarea inside this same module and is also sized inline. It
+      //     would collapse to zero height and the highlight would vanish.
+      s.textContent = `
+        [data-module-name="Remarks"],
+        [data-module-name="Remarks"] *:not(textarea):not(.qc-hl) {
+          height: auto !important;
+          max-height: none !important;
+        }
+        [data-module-name="Remarks"] textarea {
+          overflow-y: hidden !important;
+          max-height: none !important;
+          resize: none;
+        }`;
+      document.head.appendChild(s);
+    }
+
+    function grow() {
+      const ta = document.querySelector(SEL);
+      if (!ta) return;
+      // Only announce a real height change — the listeners downstream
+      // (Module 3's highlight overlay) do measurable work.
+      if (Utils.autoGrowTextarea(ta)) {
+        document.dispatchEvent(new CustomEvent(GROWN_EVENT));
+      }
+    }
+
+    injectStyle();
+
+    // One delegated capture-phase listener covers every write path at once:
+    // a person typing, and every programmatic write, since setNativeValue
+    // dispatches `input` (it has to, for React to see the change at all).
+    document.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t && t.tagName === 'TEXTAREA' && t.closest && t.closest('[data-module-name="Remarks"]')) grow();
+    }, true);
+
+    // The content is unchanged but the wrap point moves, so the height must
+    // be recomputed from scratch.
+    window.addEventListener('resize', grow);
+
+    // React replaces the textarea node outright on re-render, which drops the
+    // inline height with it, and a row change swaps in different content. Both
+    // show up as mutations; re-injecting the style is cheap and idempotent.
+    let t = null;
+    new MutationObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(() => { injectStyle(); grow(); }, 220); // same settle delay the modules use
+    }).observe(document.body, { childList: true, subtree: true });
+
+    grow(); // first pass, for content already on the page
+  }
 
   // ======================================================================
   // MODULE 1: Scoring Shortcuts
@@ -141,6 +423,7 @@
       keyConfusing: 'c', // case-insensitive
       keyErase: 'z',        // clear the active translation's score; stays on the same translation
       keyToggleWindow: 'p', // show/hide the whole shortcuts panel
+      keyToggleBlock: 'b',  // turn the submit blocker on/off (see blockEnabled)
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
       pathKey2: '2 Points',
       pathKeyConfusing: 'Confusing',
@@ -152,19 +435,35 @@
 
     // ---------- Runtime state ----------
     let enabled = true;       // master on/off switch for the shortcuts
-    let activeIdx = 0;        // index of the currently-active translation (0 = Trans1)
+    // Whether Enter is blocked while any populated translation is still
+    // incompletely labelled. Session-only on purpose — deliberately NOT
+    // persisted alongside the other trans-tool:nova-score-* keys, so this
+    // can never leave a later session quietly unblocked. Toggled with B.
+    let blockEnabled = true;
     let lastRowSig = '';      // fingerprint of the previous row's source text, to detect a row change
     let queue = [];           // pending score requests, strictly in the order keys were pressed
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
     let labelMode = false;    // true while a "2 Points" label pick is in progress
     let labelBusy = false;    // guards against double-firing while a label click is mid-flight
     let labelBadgeRAF = null; // handle for the loop that keeps the label menu's number badges in sync
-    // Remembers the last active translation within each column (1-3 / 4-7),
-    // so ←/→ returns you to where you left off in the other column instead
-    // of jumping to a fixed mirrored slot. Persists across rows on purpose —
-    // if you habitually check e.g. Trans6 first, ← / → keeps landing there.
-    let lastColLeft = null;
-    let lastColRight = null;
+
+    // The active-translation cursor. Shared with Module 3 (see TransCursor
+    // above), which is why this module no longer tracks an index or its own
+    // per-column memory — ←/→ returning you to where you left off in each
+    // column is the cursor's job now.
+    const cursor = TransCursor({
+      list: () => getScoreModules().map(transNumberOf),
+      status: setStatus,
+      onChange(num, { scroll }) {
+        document.querySelectorAll('.tl-active-score').forEach((el) => el.classList.remove('tl-active-score'));
+        if (!enabled || num === null) return;
+        const mod = scoreModuleFor(num);
+        if (!mod) return;
+        // Highlight the whole "TransX Score" block (title + dropdown), not just the dropdown itself.
+        (mod.querySelector('.cascade-container') || mod).classList.add('tl-active-score');
+        if (scroll) mod.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      },
+    });
 
     // ====================================================================
     // Reading the page
@@ -228,9 +527,53 @@
       return item ? item.textContent.trim() : '';
     }
 
+    // ====================================================================
+    // Submission blocker (added v1.3.2)
+    // ====================================================================
+
+    // Is this translation completely labelled? Two catches, both exact
+    // string comparisons: nothing selected at all, or a bare "2 Points" that
+    // never got specialized.
+    //
+    // Never split the value on "/" to count depth. Score and label are one
+    // cascader whose displayed value joins levels with " / ", and some labels
+    // legitimately contain " / " themselves ("Unauthentic Vocabulary /
+    // Collocations") — so a complete
+    // "2 Points / Authenticity / Unauthentic Vocabulary / Collocations" has
+    // *more* separators than an incomplete "2 Points / Authenticity". Depth
+    // is not recoverable from the display text; exact equality is.
+    //
+    // Deliberately derived from the live DOM rather than tracked as a flag
+    // set by the scoring shortcuts. "2" leaves the dropdown open so the
+    // label can be picked with the mouse, so a tracked flag would have to be
+    // reconciled against the DOM anyway — and onMutate's 200ms debounce
+    // against a constantly re-rendering SPA would overwrite it on nearly
+    // every tick, making the stored copy decorative. This way mouse and
+    // keyboard are indistinguishable to the check, by construction.
+    //
+    // Known gap: mouse-picking a mid-level category and stopping
+    // ("2 Points / Authenticity") reads as complete — it's neither empty nor
+    // bare "2 Points". The 0-9 path can't produce that state (it commits
+    // only on a leaf), so it takes deliberate mouse misuse. If it ever
+    // matters, the fix is to harvest every `ant-cascader-menu-item-expand`
+    // path the script renders into a known-non-leaf set and block on
+    // membership — that self-seeds, since you can't reach
+    // "2 Points / Authenticity" without the script having just watched
+    // Authenticity render as expandable.
+    function isLabelComplete(mod) {
+      const v = readSelected(mod).trim();
+      return v !== '' && v !== CFG.pathKey2;
+    }
+
+    // Trans numbers that would block a submit. getScoreModules() already
+    // excludes empty translations, so "populated" comes for free.
+    function incompleteTransNumbers() {
+      return getScoreModules().filter((m) => !isLabelComplete(m)).map(transNumberOf);
+    }
+
     // A fingerprint for "which row am I on" — the source text is always
     // present and different per row, so a change in it means the page has
-    // navigated to a new row and per-row state (activeIdx, etc.) should reset.
+    // navigated to a new row and per-row state (the cursor, etc.) should reset.
     function getRowSig() {
       const src = document.querySelector('[data-module-key="NoteTrans"]')
         || document.querySelector('[data-module-name="Trans1"]');
@@ -279,32 +622,57 @@
           background-position: center;
           background-repeat: repeat-y;
           background-size: 2px 8px;
-        }`;
+        }
+        /* Blocked-submission toast. Its own floating element rather than the
+           panel's status line, which is invisible when the panel is
+           collapsed — a blocked submit must never be missable. */
+        #tl-toast {
+          position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+          z-index: 2147483647; max-width: min(520px, 92vw);
+          padding: 14px 20px; border-radius: 12px;
+          background: #fff4e6; color: #8a4b00; border: 2px solid #ffa94d;
+          box-shadow: 0 10px 40px rgba(0,0,0,.22);
+          font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          text-align: center; pointer-events: none;
+          opacity: 0; transition: opacity .12s;
+        }
+        #tl-toast.tl-toast-show { opacity: 1; }
+        #tl-toast b { color: #c92a2a; }
+        #tl-toast .tl-toast-sub { display: block; margin-top: 5px; font-size: 12px; color: #a1690a; }`;
       document.head.appendChild(s);
     }
 
-    function applyHighlight() {
-      document.querySelectorAll('.tl-active-score').forEach((el) => el.classList.remove('tl-active-score'));
-      if (!enabled) return;
-      const mods = getScoreModules();
-      if (!mods.length) return;
-      if (activeIdx >= mods.length) activeIdx = mods.length - 1;
-      if (activeIdx < 0) activeIdx = 0;
-      const mod = mods[activeIdx];
-      // Highlight the whole "TransX Score" block (title + dropdown), not just the dropdown itself.
-      const target = mod.querySelector('.cascade-container') || mod;
-      target.classList.add('tl-active-score');
-      // Remember which column this translation belongs to, for ←/→ (see jumpColumn).
-      const num = transNumberOf(mod);
-      if (num !== null) { if (num <= 3) lastColLeft = num; else lastColRight = num; }
-      return mod;
+    // Show a transient centered message. Re-shown while already visible just
+    // resets the timer, so holding Enter doesn't stack toasts.
+    let toastTimer = null;
+    function showToast(html, ms = 2600) {
+      let t = document.getElementById('tl-toast');
+      if (!t) {
+        injectStyle();
+        t = document.createElement('div');
+        t.id = 'tl-toast';
+        document.body.appendChild(t);
+      }
+      t.innerHTML = html;
+      // Next frame, so the opacity transition actually runs on first show.
+      requestAnimationFrame(() => t.classList.add('tl-toast-show'));
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        t.classList.remove('tl-toast-show');
+      }, ms);
     }
 
-    function scrollActiveIntoView() {
-      const mods = getScoreModules();
-      const mod = mods[activeIdx];
-      if (mod) mod.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // The scoring control for a given Trans number. The cursor deals in
+    // numbers, so this is how call sites get back to the DOM node.
+    function scoreModuleFor(num) {
+      return getScoreModules().find((m) => transNumberOf(m) === num) || null;
     }
+
+    // Re-anchor the cursor to the live list and repaint the highlight.
+    // Replaces the old applyHighlight(): the clamping it used to do is now
+    // TransCursor.sync()'s job, and the per-column memory it used to record
+    // moved into the cursor's own set().
+    function applyHighlight() { return cursor.sync(); }
 
     // ====================================================================
     // Setting a score programmatically
@@ -398,46 +766,13 @@
       }
     }
 
-    // Move the active-translation cursor.
-    function move(delta) {
-      const mods = getScoreModules();
-      if (!mods.length) return;
-      activeIdx = Math.max(0, Math.min(mods.length - 1, activeIdx + delta));
-      applyHighlight();
-      scrollActiveIntoView();
-      setStatus(`Current: Trans${transNumberOf(mods[activeIdx]) || activeIdx + 1}`);
-    }
-
-    // Jump sideways to the other column: Trans1-3 are the left column,
-    // Trans4-7 are the right column. Both ← and → do the same thing —
-    // always toggle to the other column, direction doesn't matter. Rather
-    // than landing on a fixed mirrored slot, this returns you to wherever
-    // you last were in that column (lastColLeft/lastColRight, updated by
-    // applyHighlight on every move); the first time you ever jump into a
-    // column, it lands on the first scoreable translation there. If neither
-    // the remembered nor the fallback translation is currently scoreable
-    // (missing or empty), this does nothing rather than guess.
-    function jumpColumn() {
-      const mods = getScoreModules();
-      if (!mods.length) return;
-      const curNum = transNumberOf(mods[activeIdx]);
-      if (curNum === null) return;
-      const goingRight = curNum <= 3;
-      const inTargetColumn = goingRight ? (n) => n >= 4 : (n) => n <= 3;
-      const remembered = goingRight ? lastColRight : lastColLeft;
-      let targetNum = remembered !== null && inTargetColumn(remembered) ? remembered : null;
-      if (targetNum === null) {
-        const firstAvailable = mods.map(transNumberOf).find(inTargetColumn);
-        if (firstAvailable === undefined) return; // nothing scoreable in the other column
-        targetNum = firstAvailable;
-      }
-      const targetIdx = mods.findIndex((m) => transNumberOf(m) === targetNum);
-      if (targetIdx === -1) return; // target translation isn't scoreable right now — stay put
-      activeIdx = targetIdx;
-      applyHighlight();
-      scrollActiveIntoView();
-      setStatus(`Current: Trans${targetNum}`);
-    }
+    // Move the active-translation cursor. Both of these are now one-liners
+    // over the shared cursor: stepping, the clamping at either end, the
+    // column rule (Trans1-3 vs Trans4-7, either arrow toggles) and the
+    // per-column memory all live in TransCursor, and the "Current: TransN"
+    // status comes from the `status` callback wired into it above.
+    function move(delta) { cursor.step(delta); }
+    function jumpColumn() { cursor.toggleColumn(); }
 
     // Queue a score request (in key-press order) and kick off processing.
     function enqueueScore(pathKey, label, advance) {
@@ -489,15 +824,15 @@
     // what was requested, stop and surface the mismatch — never keep going
     // as if it had worked.
     async function applyOne(req) {
-      const mods = getScoreModules();
-      if (!mods.length) { setStatus('No scoring control found'); return; }
-      if (activeIdx >= mods.length) activeIdx = mods.length - 1;
-      if (activeIdx < 0) activeIdx = 0;
-
-      const idx = activeIdx;
-      const mod = mods[idx];
-      const name = mod.getAttribute('data-module-name') || `#${idx + 1}`;
-      const num = transNumberOf(mod) || idx + 1; // the real Trans number, correct even when earlier slots were skipped
+      // Snapshot the list and re-anchor the cursor to it *before* any await.
+      // The advance below must be computed against this same snapshot, not a
+      // freshly re-read list — that's what TransCursor.nextIn is for.
+      const nums = cursor.list();
+      if (!nums.length) { setStatus('No scoring control found'); return; }
+      const num = cursor.sync();
+      const mod = scoreModuleFor(num);
+      if (!mod) { setStatus('No scoring control found'); return; }
+      const name = mod.getAttribute('data-module-name') || `Trans${num} Score`;
 
       if (req.kind === 'erase') {
         const before = readSelected(mod);
@@ -549,11 +884,11 @@
       }
 
       if (req.advance) {
-        activeIdx = Math.min(mods.length - 1, idx + 1);
-        applyHighlight();
-        scrollActiveIntoView();
-        const nextNum = transNumberOf(mods[activeIdx]) || activeIdx + 1;
-        setStatus(idx === activeIdx ? `Trans${num} = ${got} ✓ (last)` : `Trans${num} = ${got} ✓ → Trans${nextNum}`);
+        // Advance against the pre-await snapshot, deliberately — re-reading
+        // the list here would change which translation gets focused next.
+        const nextNum = TransCursor.nextIn(nums, num);
+        cursor.set(nextNum, { scroll: true });
+        setStatus(num === nextNum ? `Trans${num} = ${got} ✓ (last)` : `Trans${num} = ${got} ✓ → Trans${nextNum}`);
       } else {
         // "2 Points": leave the menu open, enter label-pick mode, show the number badges.
         applyHighlight();
@@ -615,19 +950,24 @@
     }
 
     // Read back the chosen label, close the menu, and advance to the next scoreable translation.
-    async function commitLabelAndAdvance(idx, list) {
-      await Utils.waitFor(() => { const m = list[idx]; return m && readSelected(m).length > 0; }, 600).catch(() => {});
-      const got = list[idx] ? readSelected(list[idx]) : '';
+    //
+    // Takes (mod, num, nums) rather than the old (idx, list). That signature
+    // change fixes a latent bug: the old version read the value back with
+    // `list[idx]` but then advanced with `idx + 1` applied to a *freshly
+    // re-read* `list2`. Those two arrays are only guaranteed to line up while
+    // the row is unchanged, so if the list shifted mid-label-pick the advance
+    // could land on the wrong translation. Carrying the Trans number instead
+    // of an index makes that mismatch impossible to express.
+    async function commitLabelAndAdvance(mod, num, nums) {
+      await Utils.waitFor(() => mod && readSelected(mod).length > 0, 600).catch(() => {});
+      const got = mod ? readSelected(mod) : '';
       labelMode = false;
       clearLabelBadges();
       if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
       await closeOpenCascaders(); // make sure the menu is actually closed
-      const list2 = getScoreModules();
-      activeIdx = Math.min(list2.length - 1, idx + 1);
-      applyHighlight();
-      scrollActiveIntoView();
-      const nextNum = transNumberOf(list2[activeIdx]) || activeIdx + 1;
-      setStatus(idx === activeIdx ? `Label set: ${got} ✓ (last)` : `Label set: ${got} ✓ → Trans${nextNum}`);
+      const nextNum = TransCursor.nextIn(nums, num);
+      cursor.set(nextNum, { scroll: true });
+      setStatus(num === nextNum ? `Label set: ${got} ✓ (last)` : `Label set: ${got} ✓ → Trans${nextNum}`);
     }
 
     // Pick item N from the current rightmost (deepest) menu column. An item
@@ -648,15 +988,18 @@
         // The decisive signal: an expand-arrow class means "category, can drill deeper";
         // its absence means "this is a leaf label."
         const isLeaf = !li.classList.contains('ant-cascader-menu-item-expand');
-        const list = getScoreModules();
-        const idx = activeIdx;
+        // Captured before the click, so the commit below reads back and
+        // advances relative to the translation this label was picked *for*.
+        const nums = cursor.list();
+        const num = cursor.get();
+        const mod = scoreModuleFor(num);
         const colsBefore = cols.length;
 
         Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
 
         if (isLeaf) {
           // The platform doesn't auto-close the menu for a leaf pick, so we commit and advance ourselves.
-          await commitLabelAndAdvance(idx, list);
+          await commitLabelAndAdvance(mod, num, nums);
           return;
         }
 
@@ -675,7 +1018,7 @@
         const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
         if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
           Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
-          await commitLabelAndAdvance(idx, list);
+          await commitLabelAndAdvance(mod, num, nums);
         } else {
           setStatus('Category selected — press a number for the sub-label');
         }
@@ -690,20 +1033,10 @@
 
     // Is the user currently typing somewhere (Remarks/Rewrite, etc.)? If so,
     // number/letter keys must be left alone for typing, not intercepted.
-    // Note: the cascader's own hidden search input is readonly, so it does
-    // NOT count as "typing" here.
-    function inTextEntry() {
-      const el = document.activeElement;
-      if (!el) return false;
-      if (el.isContentEditable) return true;
-      if (el.tagName === 'TEXTAREA') return true;
-      if (el.tagName === 'INPUT') {
-        if (el.readOnly) return false;
-        const t = (el.type || '').toLowerCase();
-        return ['text', 'search', 'email', 'number', 'password', 'url', 'tel'].includes(t);
-      }
-      return false;
-    }
+    // Moved to Utils in v1.3.2, unchanged, when Module 3 grew a keyboard and
+    // needed the same test — including the readonly-input exemption for the
+    // cascader's own hidden search box.
+    const inTextEntry = () => Utils.inTextEntry();
 
     function onKeyDown(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return; // never touch modifier combos (the platform's own Ctrl+H, etc.)
@@ -715,12 +1048,54 @@
       }
       if (inTextEntry()) return; // typing in Remarks/Rewrite → letter/number keys are for typing, not shortcuts
 
+      // Enter is the platform's submit (Space was, through v1.3.2 — moved
+      // here in v1.3.3 so Space goes back to being the platform's untouched
+      // native submit key). Hold Enter back while any populated translation
+      // is still incompletely labelled.
+      //
+      // Placed after the inTextEntry() guard on purpose, so Enter stays a
+      // literal newline whenever a text field has focus — never intercept
+      // Enter while someone is typing a remark.
+      //
+      // We only ever suppress the keystroke; we never look for or click the
+      // submit button. That's why clicking Submit with the mouse, or
+      // pressing Space, still works as an override, for free.
+      if (e.key === 'Enter') {
+        if (!blockEnabled) return;
+        const bad = incompleteTransNumbers();
+        if (!bad.length) return; // everything labelled → the platform's Enter proceeds untouched
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const list = bad.map((n) => `Trans${n}`).join(', ');
+        showToast(
+          `⛔ Not submitted — <b>${list}</b> ${bad.length === 1 ? 'is' : 'are'} missing a complete label.`
+          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+          + ` override (<span class="tl-kbd">${CFG.keyToggleBlock.toUpperCase()}</span> turns this check off).</span>`
+        );
+        setStatus(`⛔ Submit blocked — incomplete: ${list}`);
+        return;
+      }
+
       // Show/hide the whole panel. Checked before the enabled gate below,
       // same as Esc — you can always get the window back even while
       // shortcuts are turned OFF.
       if (e.key.toLowerCase() === CFG.keyToggleWindow) {
         e.preventDefault();
         setCollapsed(!collapsed);
+        return;
+      }
+
+      // Toggle the submit blocker. Also checked before the enabled gate —
+      // if the blocker is holding Enter back, you must be able to switch it
+      // off without first turning the shortcuts back on.
+      if (e.key.toLowerCase() === CFG.keyToggleBlock) {
+        e.preventDefault();
+        blockEnabled = !blockEnabled;
+        updateBlockBadge();
+        showToast(blockEnabled
+          ? '🛡️ Submit check <b>ON</b><span class="tl-toast-sub">Enter is held back until every populated translation has a complete label.</span>'
+          : '⚠️ Submit check <b>OFF</b><span class="tl-toast-sub">Enter submits regardless of missing labels.</span>');
+        setStatus(`Submit check ${blockEnabled ? 'ON' : 'OFF'}`);
         return;
       }
 
@@ -765,13 +1140,24 @@
     // Status panel
     // ====================================================================
 
-    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null;
+    let panelEl = null, statusEl = null, toggleBtn = null, skippedEl = null, pillEl = null, blockBadgeEl = null;
     let collapsed = false;    // true while minimized to the bottom-left pill
     let naturalWidth = null;  // the panel's default width, measured once on first render — resize can shrink below this but never grow past it
 
     function setStatus(msg) {
       if (statusEl) statusEl.textContent = msg; // shown to the annotator in the panel
       log(msg);                                 // echoed to console only when DEBUG is on
+    }
+
+    // The submit-blocker's state, in the panel header. Worth showing: if
+    // Enter stops working, "why" should be answerable by looking rather than
+    // by remembering whether you pressed B.
+    function updateBlockBadge() {
+      if (!blockBadgeEl) return;
+      blockBadgeEl.textContent = blockEnabled ? '🛡️ Submit check' : '⚠️ Check OFF';
+      blockBadgeEl.style.background = blockEnabled ? '#ebfbee' : '#fff0f0';
+      blockBadgeEl.style.color = blockEnabled ? '#2b8a3e' : '#c92a2a';
+      blockBadgeEl.style.border = `1px solid ${blockEnabled ? '#b2f2bb' : '#ffc9c9'}`;
     }
 
     // Shows which translations on this row were skipped for having no text.
@@ -789,7 +1175,10 @@
         toggleBtn.textContent = on ? 'Shortcuts: ON' : 'Shortcuts: OFF';
         toggleBtn.style.background = on ? CFG.highlightColor : '#9aa0ac';
       }
-      if (on) { applyHighlight(); setStatus(`ON · Trans${activeIdx + 1}`); }
+      // Reports the real Trans number now. The old `activeIdx + 1` was wrong
+      // whenever an earlier slot was empty and therefore skipped — it named a
+      // position in the scoreable list, not a translation.
+      if (on) { const num = applyHighlight(); setStatus(`ON · Trans${num == null ? 1 : num}`); }
       else { document.querySelectorAll('.tl-active-score').forEach((el) => el.classList.remove('tl-active-score')); setStatus('OFF'); }
     }
 
@@ -819,6 +1208,8 @@
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
           <span style="font-weight:600;white-space:nowrap;">⌨️ Scoring Shortcuts</span>
           <span style="font-size:11px;background:#ffe066;color:#664d00;padding:1px 7px;border-radius:6px;font-weight:700;">${VERSION}</span>
+          <span id="tl-block-badge" title="Enter won't submit until every populated translation has a complete label (B toggles)" style="
+            font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
           <span style="flex:1;"></span>
           <button id="tl-score-toggle" style="
             padding:4px 12px;border:none;border-radius:7px;color:#fff;
@@ -836,6 +1227,7 @@
           <span style="white-space:nowrap;"><span class="tl-kbd">←</span><span class="tl-kbd">→</span> swap column</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">R</span> Remark composer</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide window</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">B</span> Submit check on/off</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
           <span id="tl-score-status" style="font-size:12px;color:#3b5bdb;flex:1;min-height:16px;"></span>
@@ -847,6 +1239,8 @@
       skippedEl = p.querySelector('#tl-score-skipped');
       toggleBtn = p.querySelector('#tl-score-toggle');
       toggleBtn.addEventListener('click', () => setEnabled(!enabled));
+      blockBadgeEl = p.querySelector('#tl-block-badge');
+      updateBlockBadge();
 
       // Measure the panel's natural (un-resized) width before anything can
       // override it — this becomes the resize handle's upper bound, so you
@@ -1003,7 +1397,9 @@
         const sig = getRowSig();
         if (sig && sig !== lastRowSig) { // row changed → reset the active-translation cursor
           lastRowSig = sig;
-          activeIdx = 0;
+          // Silent: the `if (enabled) applyHighlight()` below does the paint.
+          // Column memory deliberately survives a row change (see TransCursor).
+          cursor.reset({ silent: true });
           if (labelMode) exitLabelMode(); // a row change cancels any in-progress label pick
           const nums = getScoreModules().map(transNumberOf);
           log(`Scoreable Trans on this row: ${nums.join(', ')} (empty ones auto-skipped)`);
@@ -1343,6 +1739,18 @@
     // reading. The selection must sit entirely within one translation — a
     // selection spanning more than one, or no selection at all, does
     // nothing (with a hint) rather than guess which translation was meant.
+    //
+    // Containment is checked against the TransN container itself (via
+    // Range.intersectsNode), not `.preview-content` — a straight anchor/
+    // focus `.closest('.preview-content')` check (pre-v1.3.3) rejected the
+    // common case of selecting an *entire* translation, because dragging
+    // past the last character (or releasing in the blank space below the
+    // last line) is a real Selection/Range quirk that resolves the boundary
+    // to `.preview-content`'s parent rather than a node inside it, and
+    // `.closest()` only ever walks upward from where the boundary landed.
+    // Checking which TransN container(s) the range intersects is forgiving
+    // about exactly where within the block the boundary resolved to, while
+    // still refusing a selection that actually spans two translations.
     function tryQuoteSelection() {
       const selObj = window.getSelection();
       const text = selObj ? selObj.toString().trim() : '';
@@ -1354,20 +1762,21 @@
         setHint('Nothing selected — jumped into the Remark Composer box. Select text in a translation first to quote it.');
         return false;
       }
-      let anchor = selObj.anchorNode;
-      if (anchor && anchor.nodeType === 3) anchor = anchor.parentElement;
-      let focus = selObj.focusNode;
-      if (focus && focus.nodeType === 3) focus = focus.parentElement;
-      const anchorContent = anchor && anchor.closest && anchor.closest('.preview-content');
-      const focusContent = focus && focus.closest && focus.closest('.preview-content');
-      if (!anchorContent || anchorContent !== focusContent) {
+      const range = selObj.rangeCount ? selObj.getRangeAt(0) : null;
+      if (!range) return false;
+      let transNum = null;
+      const mods = document.querySelectorAll('[data-module-name]');
+      for (const mod of mods) {
+        const m = /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
+        if (!m || !range.intersectsNode(mod)) continue;
+        if (transNum) { transNum = null; break; } // touches a second translation → ambiguous, bail
+        transNum = m[1];
+      }
+      if (!transNum) {
         setHint('Selection must stay inside a single translation.');
         return false;
       }
-      const mod = anchorContent.closest('[data-module-name]');
-      const m = mod && /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
-      if (!m) return false;
-      appendToken(`Trans ${m[1]} "${text}"`, 'quote');
+      appendToken(`Trans ${transNum} "${text}"`, 'quote');
       if (selObj.removeAllRanges) selObj.removeAllRanges();
       return true;
     }
@@ -1827,8 +2236,9 @@
     let lastRowSig = '';         // row signature; re-scrape on a row change
     let diffNums = [];           // trans numbers currently disagreeing (for the summary count)
     let adopted = new Map();     // adopted Trans -> the original Annotator 1 value (was/undo); cleared on a row change
-    let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null;
+    let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
     let helpOpen = true;         // whether the panel help text is expanded (default expanded so the intro is fully visible)
+    let labelBusy = false;       // guards against double-firing while a label-menu click is mid-flight
 
     function escapeHtml(s) { return Utils.escapeHtml(s); }
 
@@ -2098,12 +2508,12 @@
     // Click a red badge -> write Annotator 2's value into Trans n of Annotator 1 (mouse only, no keyboard).
     async function adoptOther(n) {
       if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to adopt.</span>'); return; }
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return; }
       const target = snapB[n] || '';
       if (!target) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return; }
       const prev = readScore(n); // the value before adopting (Annotator 1) -> saved for "was..." + undo
       adopting = true;
-      setSummary(`Adopting Annotator 2 into Trans${n}…`);
+      setSummary(`Swapping Trans${n} to Annotator 2…`);
       try {
         await writeCascade(n, target);
         if (!adopted.has(n)) adopted.set(n, prev); // record the original only on the first adopt (repeat clicks don't overwrite)
@@ -2151,11 +2561,207 @@
       if (readScore(n) !== '') throw new Error('清空后仍有值');
     }
 
+    // ====================================================================
+    // Keyboard relabelling (added v1.3.2)
+    //
+    // Same shortcuts as Module 1 — 3 / C / Z / 2 then 0-9 — but driving the
+    // reviewer's own (Annotator 1) cascader on the QC page. Every write goes
+    // through writeCascade, so it inherits the read-back-and-verify
+    // guarantee: a relabel either lands the exact value or reports failure,
+    // never silently applies something else.
+    // ====================================================================
+
+    // The path-keys the shortcuts drive. Same strings as Module 1's CFG —
+    // deliberately restated rather than shared, because they're the
+    // platform's vocabulary and each module reads them from the same DOM.
+    const PATH_KEY = { '3': '3 Points', '2': '2 Points', c: 'Confusing' };
+
+    // Shared preflight for every keyboard write: not mid-scrape, not
+    // mid-write, and on the tab we're allowed to write to. Returns false and
+    // explains itself rather than failing silently — a keystroke that
+    // quietly does nothing is worse than one that says why.
+    function canWrite(n) {
+      if (scraping || adopting || !ready) return false;
+      if (n == null) { setCursorStatus('No translation selected'); return false; }
+      if (activeTabIndex() !== 0) {
+        setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to edit.</span>');
+        return false;
+      }
+      return true;
+    }
+
+    // Score the cursor's translation. "2 Points" is a category, not a leaf,
+    // so after writing it we reopen the dropdown and leave it open for the
+    // 0-9 label pick — mirroring Module 1's `advanceOn2: false`.
+    async function relabel(n, pathKey) {
+      if (!canWrite(n)) return;
+      adopting = true;
+      setCursorStatus(`Trans${n} → ${pathKey}…`);
+      try {
+        await writeCascade(n, pathKey);
+        snapA[n] = pathKey;
+        adopted.delete(n); // a hand-set value is no longer "adopted from Annotator 2"
+        if (pathKey === PATH_KEY['2']) {
+          await reopenForLabelPick(n);
+          setCursorStatus(`Trans${n} = 2 Points — press 1-9/0 for a label`);
+        } else {
+          setCursorStatus(`Trans${n} = ${pathKey} ✓`);
+        }
+        log(`Trans${n}: set to ${pathKey} from the keyboard`);
+      } catch (e) {
+        console.error(`${TAG} Relabel failed:`, e);
+        setCursorStatus(`⚠️ Trans${n}: could not set ${pathKey} (see console)`);
+      } finally {
+        adopting = false;
+        render();
+      }
+    }
+
+    // Clear the cursor's translation.
+    async function eraseScore(n) {
+      if (!canWrite(n)) return;
+      adopting = true;
+      try {
+        await clearCascade(n);
+        snapA[n] = '';
+        adopted.delete(n);
+        setCursorStatus(`Trans${n} cleared`);
+      } catch (e) {
+        console.error(`${TAG} Erase failed:`, e);
+        setCursorStatus(`⚠️ Trans${n}: could not clear (see console)`);
+      } finally {
+        adopting = false;
+        render();
+      }
+    }
+
+    // writeCascade deliberately closes and blurs the control when it's done.
+    // For "2 Points" we want it open, so reopen it as a separate step rather
+    // than threading a "leave it open" flag through writeCascade's
+    // verify-and-close path.
+    //
+    // Reopening has to leave the menu *drilled into* "2 Points", not just
+    // showing the top level: pickLabelByNumber reads the deepest column, and
+    // with only the top level open the digit keys would land on
+    // 3 Points/Confusing/2 Points instead of the sub-labels. Ant usually
+    // restores the selected path's columns on reopen, but not dependably
+    // enough to lean on — so drill in explicitly if it didn't.
+    async function reopenForLabelPick(n) {
+      const mod = scoreModule(n);
+      const selector = mod && mod.querySelector('.ant-select-selector');
+      const input = mod && mod.querySelector('input');
+      if (!selector) return;
+      Utils.clickEl(selector);
+      await Utils.waitFor(() => input && input.getAttribute('aria-expanded') === 'true', 1200).catch(() => {});
+
+      const columns = () => {
+        const p = labelPopupFor(n);
+        return p ? p.querySelectorAll('ul.ant-cascader-menu').length : 0;
+      };
+      if (columns() >= 2) return; // already drilled in
+      // pickNextOnPath does the adjacency-gated, canonPath-matched lookup —
+      // same engine writeCascade walks with, so "2 Points" is found the same
+      // way here as there.
+      const li = pickNextOnPath(selector, PATH_KEY['2'], 0);
+      if (!li) return;
+      Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
+      await Utils.waitFor(() => columns() >= 2, 800).catch(() => {});
+    }
+
+    // The label menu currently hanging off Trans n's cascader, or null.
+    // Adjacency-gated for the same reason writeCascade is: another
+    // translation's leftover popup must never be mistaken for this one's.
+    function labelPopupFor(n) {
+      const mod = scoreModule(n);
+      const selector = mod && mod.querySelector('.ant-select-selector');
+      if (!selector) return null;
+      const sr = selector.getBoundingClientRect();
+      let best = null, bestGap = Infinity;
+      for (const p of popupsVisible()) {
+        const gap = edgeGap(p, sr);
+        if (gap <= ADJACENT_GAP_PX && gap < bestGap) { best = p; bestGap = gap; }
+      }
+      return best;
+    }
+
+    // Pick item #i (1-based) from the deepest currently-open menu column.
+    //
+    // This is a deliberately minimal cousin of Module 1's
+    // `pickLabelByNumber`: same decisive leaf signal
+    // (`ant-cascader-menu-item-expand` present = category, absent = leaf),
+    // same single-leaf auto-pick, but without the injected number badges or
+    // the shared label-mode state. Module 1's version is entangled with its
+    // badge rAF loop, its own status panel and `activeIdx`; hoisting all of
+    // that into shared code is a bigger and riskier lift than this copy, and
+    // is the right follow-up once TransCursor has proven the pattern.
+    async function pickLabelByNumber(n, i) {
+      if (labelBusy || !canWrite(n)) return;
+      labelBusy = true;
+      try {
+        const popup = labelPopupFor(n);
+        if (!popup) { setCursorStatus('No label menu open — press 2 first'); return; }
+        const cols = popup.querySelectorAll('ul.ant-cascader-menu');
+        if (cols.length < 2) { setCursorStatus('Labels not open yet'); return; }
+        const col = cols[cols.length - 1]; // deepest column currently shown
+        const li = col.querySelectorAll('li.ant-cascader-menu-item')[i - 1];
+        if (!li) { setCursorStatus(`No item #${i} here`); return; }
+
+        const isLeaf = !li.classList.contains('ant-cascader-menu-item-expand');
+        const colsBefore = cols.length;
+        Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
+
+        if (isLeaf) { await commitLabel(n); return; }
+
+        // Category: drill in and wait for the next column to render.
+        await Utils.waitFor(() => {
+          const p = labelPopupFor(n);
+          return !!p && p.querySelectorAll('ul.ant-cascader-menu').length > colsBefore;
+        }, 800).catch(() => {});
+
+        // If drilling in reveals exactly one leaf sub-label, take it too —
+        // the leaf still has to be explicitly selected (e.g. to land on
+        // "Grammar/Grammar"), so this isn't skipping a real choice.
+        const p2 = labelPopupFor(n);
+        const newCols = p2 ? p2.querySelectorAll('ul.ant-cascader-menu') : [];
+        const deepest = newCols[newCols.length - 1];
+        const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
+        if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
+          Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
+          await commitLabel(n);
+        } else {
+          setCursorStatus('Category selected — press a number for the sub-label');
+        }
+      } finally {
+        labelBusy = false;
+      }
+    }
+
+    // A leaf was clicked: wait for the platform to show the full path, then
+    // close up and resync the snapshot. The platform doesn't auto-close the
+    // menu after a leaf pick, so we do it.
+    async function commitLabel(n) {
+      await Utils.waitFor(() => readScore(n) !== '', 900).catch(() => {});
+      await closeOpenCascaders();
+      if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+      const got = readScore(n);
+      snapA[n] = got;
+      adopted.delete(n);
+      setCursorStatus(got ? `Trans${n} = ${got} ✓` : `⚠️ Trans${n}: label didn't register`);
+      render();
+    }
+
+    // Close the label menu without picking anything (Esc).
+    async function cancelLabelPick(n) {
+      await closeOpenCascaders();
+      if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+      setCursorStatus(n == null ? 'Label pick cancelled' : `Trans${n}: label pick cancelled`);
+    }
+
     // Adopt Annotator 2's long text (Remarks/Rewrite) -> write the whole thing into Annotator 1's field (the field is editable, so you can hand-mix parts).
     // Remarks doesn't use this — see appendRemarkLine below.
     function adoptFieldText(key) {
       if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to adopt.</span>'); return; }
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return; }
       const f = TEXT_FIELDS.find((x) => x.key === key);
       const ta = f && fieldTextarea(f.module);
       if (!ta) return;
@@ -2241,14 +2847,15 @@
       log(`Remarks: appended Annotator 2's line ${idx + 1}`);
       render();
       // One frame later (see Module 2's focusEditEnd for why synchronous focus loses a fight with the browser pulling
-      // it back toward the button that was just clicked): focus the real Remarks field, put the caret at the end, and
-      // scroll so the newly appended line is visible — makes the whole interaction one click instead of
-      // click-then-manually-click-the-box.
+      // it back toward the button that was just clicked): focus the real Remarks field and put the caret at the end —
+      // makes the whole interaction one click instead of click-then-manually-click-the-box.
+      //
+      // v1.3.1 also scrolled the field's own content down to reveal the appended line. That's gone as of v1.3.2: the
+      // field now grows to fit its content and never scrolls internally, so there was nothing left to scroll.
       requestAnimationFrame(() => {
         ta.focus();
         try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
-        ta.scrollTop = ta.scrollHeight;
-        syncFieldHighlights(); // re-sync the Trans-N highlight overlay to the new scroll position
+        syncFieldHighlights(); // the field just got taller — re-measure the Trans-N highlight overlay
       });
     }
 
@@ -2355,13 +2962,13 @@
         let html, cls;
         if (!onB && adopted.has(n)) { // show "adopted + original + undo" only on the Annotator 1 tab
           const prev = adopted.get(n);
-          html = `✓ Adopted Annotator 2 <span class="qc-was">· was: ${escapeHtml(prev || '(not scored)')}</span> <span class="qc-undo" data-undo="${n}">Undo</span>`;
+          html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${escapeHtml(prev || '(not scored)')}</span> <span class="qc-undo" data-undo="${n}">Undo</span>`;
           cls = 'qc-badge qc-adopted';
         } else if (same) {
           html = `✓ ${otherLabel} agrees`;
           cls = 'qc-badge qc-same';
         } else {
-          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${escapeHtml(other || '(not scored)')}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Adopt →</span>`;
+          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${escapeHtml(other || '(not scored)')}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Swap →</span>`;
           cls = 'qc-badge qc-diff';
         }
         if (badge.innerHTML !== html) badge.innerHTML = html; // write only on change, to avoid triggering a needless mutation
@@ -2447,14 +3054,14 @@
         } else if (!onB && adoptedText.has(f.key)) { // Annotator 1 only: adopted -> show the original + Undo
           const prev = adoptedText.get(f.key);
           cls = 'qc-textbox qc-tb-adopted';
-          html = `<div class="qc-tb-head"><span>✓ Adopted Annotator&nbsp;2's ${f.label}</span><span class="qc-spacer"></span><span class="qc-tb-undo" data-undo-text="${f.key}">Undo</span></div>`
+          html = `<div class="qc-tb-head"><span>✓ Swapped to Annotator&nbsp;2's ${f.label}</span><span class="qc-spacer"></span><span class="qc-tb-undo" data-undo-text="${f.key}">Undo</span></div>`
                + `<div class="qc-tb-was">was (Annotator&nbsp;1):</div><div class="qc-tb-body">${highlightTrans(prev || '(empty)')}</div>`;
         } else if (same) {
           cls = 'qc-textbox qc-tb-same';
           html = `✓ ${otherLabel}'s ${f.label} matches`;
         } else {
           cls = 'qc-textbox qc-tb-diff';
-          const adoptBtn = onB ? '' : `<span class="qc-tb-adopt" data-adopt-text="${f.key}">Adopt →</span>`;
+          const adoptBtn = onB ? '' : `<span class="qc-tb-adopt" data-adopt-text="${f.key}">Swap →</span>`;
           html = `<div class="qc-tb-head"><span>≠ ${otherLabel}'s ${f.label}</span><span class="qc-spacer"></span>${adoptBtn}</div>`
                + `<div class="qc-tb-body">${highlightTrans(other || '(empty)')}</div>`;
         }
@@ -2465,7 +3072,52 @@
     }
 
     // Full render: score badges + long-text compare boxes + rule checks.
-    function render() { renderBadges(); renderTextCompare(); updateWarn(); }
+    // cursor.sync() last: the platform's re-renders replace the badge hosts,
+    // which takes the selection highlight with them, so it gets restored the
+    // same way the badges themselves do. renderBadges bails while !ready, so
+    // nothing paints until the scrape completes — which is what we want,
+    // since the hosts are being rebuilt anyway.
+    function render() { renderBadges(); renderTextCompare(); updateWarn(); cursor.sync(); }
+
+    // ====================================================================
+    // Selection cursor (added v1.3.2)
+    //
+    // Same arrow-key semantics as Module 1, via the shared TransCursor:
+    // ↑/↓ step through the comparable translations, ←/→ toggle column
+    // (Trans1-3 / Trans4-7) and return to where you last were in it.
+    // ====================================================================
+    const cursor = TransCursor({
+      list: scoreableTrans, // already an ordered array of Trans numbers
+      status: setCursorStatus,
+      onChange(num, { scroll }) {
+        // Mark the badge host, not the badge's innerHTML — renderBadges
+        // rewrites that on every render and would fight the marker.
+        //
+        // No feedback-loop guard needed here (unlike the innerHTML writes in
+        // renderBadges): the observer watches childList/subtree only, with no
+        // `attributes: true`, so a classList toggle can't retrigger it.
+        document.querySelectorAll('.qc-active-score').forEach((el) => el.classList.remove('qc-active-score'));
+        if (num === null) return;
+        const mod = scoreModule(num);
+        if (!mod) return;
+        (mod.querySelector('.cascade-container') || mod).classList.add('qc-active-score');
+        // Arrow keys pass scroll:true; a plain repaint from render() doesn't.
+        // Without this the highlight walks off the bottom of a long row and
+        // the view never follows it.
+        if (scroll) mod.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      },
+    });
+
+    // Swap the cursor's translation between the two annotators' values.
+    // Formerly one-way "Adopt" plus a separate Undo click; the pair was
+    // already a clean toggle, so `S` just makes it reversible in one key.
+    // Note the naming split: user-facing text says "Swap", the underlying
+    // functions keep their adopt/undo names — renaming those would churn the
+    // data-attribute click delegation for no behavioral gain.
+    function swap(n) {
+      if (n == null) { setCursorStatus('No translation selected'); return; }
+      return adopted.has(n) ? undoAdopt(n) : adoptOther(n);
+    }
 
     // Rule-check warning: a 3-Points Trans shouldn't have a remark.
     function updateWarn() {
@@ -2480,6 +3132,14 @@
     // Summary panel (top) text helpers
     // ====================================================================
     function setSummary(msg) { if (summaryEl) summaryEl.innerHTML = msg; }
+    // The cursor/keyboard status line needs its own element, not summaryEl:
+    // updateSummary() rewrites summaryEl wholesale at the end of every
+    // renderBadges(), so anything posted there is erased on the next
+    // mutation tick. Guarded on inequality so the write can't feed the
+    // observer.
+    function setCursorStatus(msg) {
+      if (cursorEl && cursorEl.textContent !== msg) cursorEl.textContent = msg;
+    }
     function updatePanelHeader(curr, other) {
       if (!hdrEl) return;
       const html = `You are on <b>Annotator&nbsp;${curr}</b>. The note under each score shows what <b>Annotator&nbsp;${other}</b> chose.`;
@@ -2494,7 +3154,7 @@
       if (!summaryEl) return;
       const total = scoreableTrans().length; // number of translations being compared (empty ones excluded)
       const adoptedCount = adopted.size + adoptedText.size; // scores + Rewrite, so adopting Rewrite shows as progress too
-      const done = adoptedCount ? `<span style="color:#2b8a3e;"> · ${adoptedCount} adopted</span>` : '';
+      const done = adoptedCount ? `<span style="color:#2b8a3e;"> · ${adoptedCount} swapped</span>` : '';
       // Compare against the *other* tab's snapshot, the same way renderBadges picks otherSnap — on the Annotator 2 tab
       // the live Rewrite field is Annotator 2's own, so comparing it to textB would always report "no difference".
       const otherRewrite = (activeTabIndex() === 1 ? textA.rewrite : textB.rewrite) || '';
@@ -2533,6 +3193,18 @@
         .qc-badge .qc-was { color: #868e96; font-weight: 400; }
         .qc-badge .qc-undo { color: #1c7ed6; cursor: pointer; text-decoration: underline; font-weight: 600; margin-left: 6px; }
         .qc-badge .qc-undo:hover { color: #1971c2; }
+
+        /* Arrow-key selection highlight. Defined here rather than reusing
+           Module 1's .tl-active-score: that rule lives in Module 1's own
+           stylesheet, and Module 1 bails out on /quality_ pages, so it is
+           never injected here. Same amber-on-pale-yellow look, so the two
+           pages read the same way. */
+        .qc-active-score {
+          outline: 2px solid #f0a500 !important;
+          outline-offset: 2px;
+          background: rgba(255, 221, 87, .30) !important;
+          border-radius: 6px;
+        }
 
         /* long-text (Remarks/Rewrite) inline compare box */
         .qc-textbox {
@@ -2598,6 +3270,17 @@
         #qc-help { margin-top: 6px; border-top: 1px solid #f0f0f0; padding-top: 6px; }
         #qc-hdr { color: #4b5563; font-size: 12px; line-height: 1.6; margin-bottom: 4px; }
         .qc-hint { color: #8a909c; font-size: 11px; line-height: 1.6; }
+        /* Keyboard/cursor status. Its own line rather than part of #qc-summary,
+           which updateSummary() rewrites wholesale on every render. Empty by
+           default and collapses to nothing until there's something to say. */
+        #qc-cursor { color: #4b5563; font-size: 12px; line-height: 1.6; }
+        #qc-cursor:empty { display: none; }
+        .qc-kbd {
+          display: inline-block; min-width: 15px; text-align: center;
+          border: 1px solid #d9d9e3; border-bottom-width: 2px; border-radius: 4px;
+          background: #fafbfc; color: #1f2430; font-size: 10px; font-weight: 700;
+          padding: 0 3px; margin: 0 1px;
+        }
       `;
       document.head.appendChild(s);
     }
@@ -2621,10 +3304,12 @@
           <span id="qc-toggle" title="Show / hide help">▸</span>
         </div>
         <div id="qc-warn" style="display:none;"></div>
+        <div id="qc-cursor"></div>
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
           <div class="qc-hint">
-            <span style="color:#c92a2a;font-weight:600;">Red Notices</span> indicate where Annotator&nbsp;2 differs from 1 — that's what's left to reconcile. \nClick the "<span style="color:#1c7ed6;font-weight:600;">Adopt →</span>" button to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an "<span style="color:#1c7ed6;font-weight:600;text-decoration:underline;">Undo</span>" button. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. \n<b>Remarks</b> has been updated, but be not afraid! Annotator&nbsp;2's remarks are listed line by line, Click the "<span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span>" button to append that line to the end of Annotator 1's Remarks; "Add" just pastes selected row of text at end of the Remarks and will not replace, reorder, or overwrite anything written.
+            <span style="color:#c92a2a;font-weight:600;">Red Notices</span> indicate where Annotator&nbsp;2 differs from 1 — that's what's left to reconcile. \nClick the "<span style="color:#1c7ed6;font-weight:600;">Swap →</span>" button to take Annotator&nbsp;2's value; your original is kept as <i>"was…"</i> with an "<span style="color:#1c7ed6;font-weight:600;text-decoration:underline;">Undo</span>" button. Do nothing to keep Annotator&nbsp;1. <b>Rewrite</b> works the same way in a compare box below the field. \n<b>Remarks</b> has been updated, but be not afraid! Annotator&nbsp;2's remarks are listed line by line, Click the "<span style="color:#1c7ed6;font-weight:600;">＋&nbsp;Add</span>" button to append that line to the end of Annotator 1's Remarks; "Add" just pastes selected row of text at end of the Remarks and will not replace, reorder, or overwrite anything written.
+            \n<b>Keyboard</b> (new): <span class="qc-kbd">↑</span><span class="qc-kbd">↓</span> select a translation, <span class="qc-kbd">←</span><span class="qc-kbd">→</span> switch column (Trans1-3 / Trans4-7). <span class="qc-kbd">S</span> swaps the selected translation to the other annotator's value — press it again to swap back. <span class="qc-kbd">3</span> / <span class="qc-kbd">C</span> / <span class="qc-kbd">Z</span> score it 3&nbsp;Points / Confusing / clear; <span class="qc-kbd">2</span> then <span class="qc-kbd">1</span>-<span class="qc-kbd">9</span><span class="qc-kbd">0</span> picks a 2&nbsp;Points label, <span class="qc-kbd">Esc</span> cancels. Shortcuts are off while you're typing in a text field, and edits only apply on the Annotator&nbsp;1 tab.
           </div>
         </div>`;
       document.body.appendChild(p);
@@ -2632,6 +3317,7 @@
       summaryEl = p.querySelector('#qc-summary');
       warnEl = p.querySelector('#qc-warn');
       hdrEl = p.querySelector('#qc-hdr');
+      cursorEl = p.querySelector('#qc-cursor');
       const toggle = p.querySelector('#qc-toggle');
       toggle.addEventListener('click', (e) => { e.stopPropagation(); helpOpen = !helpOpen; applyHelp(); });
       makePanelDraggable(p, p.querySelector('#qc-head'), toggle);
@@ -2703,6 +3389,12 @@
         const sig = getRowSig();
         if (ready && sig && sig !== lastRowSig) { // row changed -> re-scrape Annotator 2
           log('Row changed -> re-scraping');
+          // Back to the first translation on the new row. Silent because the
+          // badge hosts are about to be rebuilt by the scrape — the first
+          // paint comes from render()'s cursor.sync(). Column memory is
+          // deliberately kept across rows (see TransCursor).
+          cursor.reset({ silent: true });
+          setCursorStatus('');
           scrapeBoth();
           return;
         }
@@ -2711,8 +3403,54 @@
     }
 
     // ====================================================================
-    // Startup — this module is mouse-only (no keyboard shortcuts at all,
-    // matching the original: it never had any).
+    // Keyboard (added v1.3.2 — this module was mouse-only before that)
+    //
+    // Nothing to arbitrate against: Modules 1 and 2 both bail out on
+    // /quality_ pages, so on this page the keyboard is entirely unclaimed
+    // except by the platform itself.
+    // ====================================================================
+    function onKeyDown(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return; // never touch modifier combos
+      const n = cursor.get();
+      // Esc only means "cancel the label pick" when there's actually a menu
+      // open. Checked before the typing guard so it works while the
+      // cascader's own search input has focus, but gated on the open menu so
+      // it never steals Esc from someone typing a remark.
+      if (e.key === 'Escape' && n != null && labelPopupFor(n)) {
+        e.preventDefault();
+        cancelLabelPick(n);
+        return;
+      }
+      if (Utils.inTextEntry()) return; // typing in Remarks/Rewrite — the keys are for typing
+
+      switch (e.key) {
+        case 'ArrowDown': e.preventDefault(); cursor.step(1); return;
+        case 'ArrowUp': e.preventDefault(); cursor.step(-1); return;
+        // Either arrow toggles column; the direction is ignored, matching Module 1.
+        case 'ArrowLeft':
+        case 'ArrowRight': e.preventDefault(); cursor.toggleColumn(); return;
+      }
+
+      // Digits are overloaded: 2 and 3 are score keys, but 1-9/0 also pick
+      // items from an open label menu. Module 1 disambiguates with a
+      // `labelMode` flag; here the open menu itself is the signal, so the
+      // mode is derived from the DOM rather than tracked. That matters for
+      // '2' and '3' specifically — without this, "2 then 3" could never
+      // reach label item #3, because '3' would always mean "3 Points".
+      if (/^[0-9]$/.test(e.key) && n != null && labelPopupFor(n)) {
+        e.preventDefault();
+        pickLabelByNumber(n, e.key === '0' ? 10 : parseInt(e.key, 10));
+        return;
+      }
+
+      const k = e.key.toLowerCase();
+      if (k === 's') { e.preventDefault(); swap(n); return; }
+      if (k === 'z') { e.preventDefault(); eraseScore(n); return; }
+      if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
+    }
+
+    // ====================================================================
+    // Startup
     // ====================================================================
     async function start() {
       // Only the review pass runs this module — Module 1/2 explicitly cede
@@ -2746,6 +3484,12 @@
         && el.closest('[data-module-name="Remarks"], [data-module-name="Rewrite"]');
       document.addEventListener('input', (e) => { if (isFieldTA(e.target)) { syncFieldHighlights(); updateWarn(); } }, true);
       document.addEventListener('scroll', (e) => { if (isFieldTA(e.target)) syncFieldHighlights(); }, true);
+      // The Remarks field grows to fit its content (see startRemarksAutoGrow).
+      // The highlight overlay is absolutely positioned and sized from the
+      // textarea's own offsetWidth/offsetHeight, so it has to be re-measured
+      // whenever that height changes or it drifts off the text.
+      document.addEventListener(GROWN_EVENT, () => syncFieldHighlights());
+      document.addEventListener('keydown', onKeyDown, true); // capture, matching Module 1
       new MutationObserver(onMutate).observe(document.body, { childList: true, subtree: true });
       // Wait for the scoring controls + both tabs to be ready before scraping.
       try {
@@ -2753,6 +3497,7 @@
       } catch (e) {
         log('Timed out waiting for the page to be ready — the observer will trigger a scrape later');
       }
+      cursor.reset({ silent: true }); // land on Trans1 (render() paints it once the scrape lands)
       await scrapeBoth();
       log(`Started ${VERSION}`);
     }
@@ -2768,6 +3513,10 @@
   const qcCompare = QCCompare(Utils);
 
   function bootAll() {
+    // Before the modules, so its `input` listener is registered first and the
+    // field has already grown by the time Module 3's own input handler
+    // re-measures the highlight overlay against it.
+    startRemarksAutoGrow(Utils);
     scoringShortcuts.start();
     remarkComposer.start();
     qcCompare.start();
