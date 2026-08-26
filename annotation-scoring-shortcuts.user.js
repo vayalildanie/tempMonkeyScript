@@ -3354,9 +3354,21 @@
       if (scroll) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
     // Re-apply the extended highlight after a re-render rebuilt the DOM it lives on (renderTextCompare rewrites
-    // innerHTML wholesale) — same reason cursor.sync() exists for the Trans badges.
+    // innerHTML wholesale) — same reason cursor.sync() exists for the Trans badges. Also the one place that catches a
+    // switch to Annotator 2's tab: extraSel is only explicitly cleared on a row change (scrapeBoth), but a plain tab
+    // click re-renders this same render() path without changing the row, so a Rewrite selection made on Annotator 1's
+    // tab would otherwise keep showing highlighted on Annotator 2's tab — where neither the +Add buttons nor the
+    // Swap control exist, so nothing was actually reachable there, only visually stale. Re-validating against the
+    // *current* extList() on every render (not just checking the element still exists, which the Rewrite box always
+    // does regardless of tab) is what actually catches that.
     function reapplyExtHighlight() {
-      if (extraSel) selectExt(extraSel, { scroll: false });
+      if (!extraSel) return;
+      if (!extList().some((x) => sameExt(x, extraSel))) {
+        extraSel = null;
+        document.querySelectorAll('.qc-active-pick').forEach((el) => el.classList.remove('qc-active-pick'));
+        return;
+      }
+      selectExt(extraSel, { scroll: false });
     }
 
     // Rule-check warning: a 3-Points Trans shouldn't have a remark.
