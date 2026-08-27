@@ -39,19 +39,6 @@
     const TAG = '[QC Compare / 质检对比]';
     const VERSION = TL.SCRIPT_VERSION;
 
-    // Read-only reflection of Remark Options' check mode (v1.4.1). Remark
-    // Composer never runs on /quality_ pages (see its own start(), which
-    // bails out there), so this page has no live check state of its own —
-    // it just reads the same localStorage key remark-composer.js's
-    // SCORE_CHECK_KEY writes, duplicated here as a plain string since that
-    // module's internals aren't exported.
-    const QC_CHECK_MODES = ['label', 'submit', 'off'];
-    const QC_CHECK_STYLES = {
-      label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
-      submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
-      off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
-    };
-    const QC_CHECK_KEY = 'trans-tool:nova-score-check-v1';
     const DEBUG = false;
     function log(msg) { if (DEBUG) console.log(`${TAG} ${msg}`); }
 
@@ -86,8 +73,7 @@
     let diffNums = [];           // trans numbers currently disagreeing (for the summary count)
     let adopted = new Map();     // adopted Trans -> the original Annotator 1 value (was/undo); cleared on a row change
     let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
-    let checkPillEl = null;      // read-only Check Icon pill, shown while the Legend is hidden (v1.4.1)
-    let helpOpen = true;         // whether the panel help text is expanded (default expanded so the intro is fully visible)
+    let helpOpen = true;         // whether the panel help text is expanded; persisted (v1.4.2), defaults to expanded on a brand-new install
     let labelBusy = false;       // guards against double-firing while a label-menu click is mid-flight
 
     function escapeHtml(s) { return Utils.escapeHtml(s); }
@@ -356,19 +342,25 @@
     }
 
     // Click a red badge -> write Annotator 2's value into Trans n of Annotator 1 (mouse only, no keyboard).
+    // Returns true on a successful adopt, false otherwise — lets the Z-key
+    // handler (v1.4.2) auto-advance only when the swap actually happened,
+    // without also firing for the equivalent mouse-driven Adopt-button
+    // click (which shouldn't move the cursor out from under a manual click).
     async function adoptOther(n) {
-      if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return; }
+      if (scraping || adopting || !ready) return false;
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return false; }
       const target = snapB[n] || '';
-      if (!target) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return; }
+      if (!target) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return false; }
       const prev = readScore(n); // the value before adopting (Annotator 1) -> saved for "was..." + undo
       adopting = true;
       setSummary(`Swapping Trans${n} to Annotator 2…`);
+      let ok = false;
       try {
         await writeCascade(n, target);
         if (!adopted.has(n)) adopted.set(n, prev); // record the original only on the first adopt (repeat clicks don't overwrite)
         snapA[n] = target; // Annotator 1 now = Annotator 2 -> update the snapshot so it stays consistent when you view Annotator 2
         log(`Trans${n}: adopted Annotator 2 = ${target} (was ${prev || 'empty'})`);
+        ok = true;
       } catch (e) {
         console.error(`${TAG} Adopt failed:`, e);
         setSummary(`⚠️ Trans${n}: could not apply Annotator 2 (see console).`);
@@ -376,6 +368,7 @@
         adopting = false;
         render();
       }
+      return ok;
     }
 
     // Undo the adopt: write the original Annotator 1 value back (clear it if it wasn't scored).
@@ -609,26 +602,31 @@
 
     // Adopt Annotator 2's long text (Remarks/Rewrite) -> write the whole thing into Annotator 1's field (the field is editable, so you can hand-mix parts).
     // Remarks doesn't use this — see appendRemarkLine below.
+    // Returns true on a successful adopt, false otherwise — same
+    // success-signaling convention as adoptOther/appendRemarkLine (v1.4.2).
     function adoptFieldText(key) {
-      if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return; }
+      if (scraping || adopting || !ready) return false;
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return false; }
       const f = TEXT_FIELDS.find((x) => x.key === key);
       const ta = f && fieldTextarea(f.module);
-      if (!ta) return;
+      if (!ta) return false;
       const target = textB[key] != null ? textB[key] : '';
       const prev = ta.value;
       adopting = true;
+      let ok = false;
       try {
         Utils.setNativeValue(ta, target);
         if (!adoptedText.has(key)) adoptedText.set(key, prev);
         textA[key] = target; // Annotator 1 now = Annotator 2
         log(`${f.label}: adopted Annotator 2`);
+        ok = true;
       } catch (e) {
         console.error(`${TAG} Adopt (long text) failed:`, e);
       } finally {
         adopting = false;
         render();
       }
+      return ok;
     }
     // Undo the long-text adopt -> write the original Annotator 1 text back.
     function undoFieldText(key) {
@@ -678,13 +676,16 @@
     }
     // Append one line of Annotator 2's Remarks to the end of Annotator 1's Remarks field. The only judgement call it
     // makes is the separator: start a fresh line unless the field is currently empty.
+    // Returns true on a successful append, false otherwise — same
+    // success-signaling convention as adoptOther/adoptFieldText (v1.4.2),
+    // so the Z-key handler can auto-advance only when a line actually got added.
     function appendRemarkLine(idx) {
-      if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to add a line.</span>'); return; }
+      if (scraping || adopting || !ready) return false;
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to add a line.</span>'); return false; }
       const line = splitRemarkLines(textB.remarks)[idx];
-      if (line == null || !line.trim()) return;
+      if (line == null || !line.trim()) return false;
       const ta = fieldTextarea('Remarks');
-      if (!ta) return;
+      if (!ta) return false;
       const cur = ta.value;
       const next = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + line : line;
       Utils.setNativeValue(ta, next);
@@ -707,6 +708,7 @@
         try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
         syncFieldHighlights(); // the field just got taller — re-measure the Trans-N highlight overlay
       });
+      return true;
     }
 
     // ====================================================================
@@ -1004,6 +1006,30 @@
     }
     function sameExt(a, b) { return !!a && !!b && a.type === b.type && a.idx === b.idx; }
 
+    // Move focus one step forward through Trans -> Remark +Add -> Rewrite —
+    // the exact same "next" logic the ArrowDown key uses (below), factored
+    // out so Z's apply-direction actions (v1.4.2) can trigger it too: a
+    // successful swap/add/adopt auto-advances, matching how the "3" key
+    // already advances after scoring in Module 1. Undo never calls this —
+    // it leaves focus exactly where it was. Deliberately no wraparound past
+    // Rewrite, matching this file's existing arrow-key behavior: Rewrite is
+    // the last stage, so advancing from there is a no-op.
+    function advanceFocus() {
+      if (extraSel) {
+        const list = extList();
+        const i = list.findIndex((x) => sameExt(x, extraSel));
+        if (i !== -1 && i < list.length - 1) selectExt(list[i + 1]); // else already at the end — stay put, no wrap
+        return;
+      }
+      const nums = cursor.list();
+      if (nums.length && cursor.get() === nums[nums.length - 1]) {
+        const list = extList();
+        if (list.length) { selectExt(list[0]); return; } // last Trans -> hand off to Remarks +Add / Rewrite
+        return; // no Remark/Rewrite to hand off to either -> stay put
+      }
+      cursor.step(1);
+    }
+
     // Paint (or clear) the extended-selection highlight. Mirrors the
     // cursor's own onChange above, but on the Remarks/Rewrite boxes instead
     // of a Trans score module.
@@ -1213,12 +1239,6 @@
           background: #fafbfc; color: #1f2430; font-size: 10px; font-weight: 700;
           padding: 0 3px; margin: 0 1px;
         }
-        #qc-check-pill {
-          position: fixed; left: 16px; bottom: 100px; z-index: 2147483647;
-          font: 12px/1 -apple-system,"Segoe UI",sans-serif; font-weight: 700;
-          cursor: default; border-radius: 18px; padding: 8px 13px;
-          box-shadow: 0 2px 10px rgba(0,0,0,.12);
-        }
       `;
       document.head.appendChild(s);
     }
@@ -1261,42 +1281,14 @@
       hdrEl = p.querySelector('#qc-hdr');
       cursorEl = p.querySelector('#qc-cursor');
       const toggle = p.querySelector('#qc-toggle');
-      toggle.addEventListener('click', (e) => { e.stopPropagation(); helpOpen = !helpOpen; applyHelp(); });
+      toggle.addEventListener('click', (e) => { e.stopPropagation(); helpOpen = !helpOpen; saveHelpOpen(); applyHelp(); });
       makePanelDraggable(p, p.querySelector('#qc-head'), toggle);
       applySavedPos(p); // use the remembered position if there is one (otherwise default top-center)
+      helpOpen = loadSavedHelpOpen(); // restore whether the Legend was left open/closed last session (v1.4.2)
       updatePanelHeader(1, 2); // default header (assumes Annotator 1); renderBadges corrects it to the actual tab
-      injectCheckPill();
       applyHelp();
     }
 
-    // ---------- Closed-state Check Icon pill (read-only; same corner/offset
-    // as Remark Options' own pill, left:16px;bottom:100px, for visual
-    // consistency — the two never coexist in the DOM since Remark Composer
-    // doesn't load on /quality_ pages) ----------
-    function injectCheckPill() {
-      if (document.getElementById('qc-check-pill')) return;
-      const pill = document.createElement('button');
-      pill.id = 'qc-check-pill';
-      pill.title = 'Check mode set on the annotation page';
-      document.body.appendChild(pill);
-      checkPillEl = pill;
-      updateCheckPill();
-    }
-
-    function updateCheckPill() {
-      if (!checkPillEl) return;
-      let mode = 'label';
-      try {
-        const idx = QC_CHECK_MODES.indexOf(localStorage.getItem(QC_CHECK_KEY));
-        mode = idx === -1 ? 'label' : QC_CHECK_MODES[idx];
-      } catch (e) {}
-      const s = QC_CHECK_STYLES[mode];
-      checkPillEl.textContent = s.text;
-      checkPillEl.style.background = s.bg;
-      checkPillEl.style.color = s.fg;
-      checkPillEl.style.border = `1px solid ${s.border}`;
-      checkPillEl.style.display = helpOpen ? 'none' : 'block';
-    }
     const QC_POS_KEY = 'trans-tool:nova-qc-pos-v1';
     function applySavedPos(p) {
       try {
@@ -1312,6 +1304,18 @@
     function savePos(p) {
       try { const r = p.getBoundingClientRect(); localStorage.setItem(QC_POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) })); } catch (e) {}
     }
+    // Whether the Legend was left open or closed, persisted (v1.4.2) so a
+    // reviewer who collapses it doesn't see it re-expand on every reload.
+    const QC_HELP_KEY = 'trans-tool:nova-qc-help-v1';
+    function loadSavedHelpOpen() {
+      try {
+        const raw = localStorage.getItem(QC_HELP_KEY);
+        return raw === null ? true : raw === '1'; // no saved value yet -> default expanded, same as before this existed
+      } catch (e) { return true; }
+    }
+    function saveHelpOpen() {
+      try { localStorage.setItem(QC_HELP_KEY, helpOpen ? '1' : '0'); } catch (e) {}
+    }
     // Collapse/expand the help text (default expanded — see helpOpen above — so a first-time reviewer sees the full
     // explanation without having to know to expand anything, matching the original exactly).
     function applyHelp() {
@@ -1320,7 +1324,6 @@
       const tg = panelEl.querySelector('#qc-toggle');
       if (help) help.style.display = helpOpen ? 'block' : 'none';
       if (tg) tg.textContent = helpOpen ? '▾' : '▸';
-      updateCheckPill(); // shows/hides the read-only Check Icon pill (v1.4.1) opposite the Legend
     }
     // Drag the header to move the panel (clicking the help toggle doesn't drag); switches to left/top positioning after being dragged.
     function makePanelDraggable(p, head, ignoreEl) {
@@ -1399,20 +1402,7 @@
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          if (extraSel) {
-            const list = extList();
-            const i = list.findIndex((x) => sameExt(x, extraSel));
-            if (i !== -1 && i < list.length - 1) selectExt(list[i + 1]); // else already at the end — stay put, no wrap
-            return;
-          }
-          {
-            const nums = cursor.list();
-            if (nums.length && cursor.get() === nums[nums.length - 1]) {
-              const list = extList();
-              if (list.length) { selectExt(list[0]); return; } // last Trans -> hand off to Remarks +Add / Rewrite
-            }
-          }
-          cursor.step(1);
+          advanceFocus();
           return;
         case 'ArrowUp':
           e.preventDefault();
@@ -1451,17 +1441,29 @@
 
       const k = e.key.toLowerCase();
       // v1.4.0: moved from P to O, matching Remark Composer's open/close key.
-      if (k === 'o') { e.preventDefault(); helpOpen = !helpOpen; applyHelp(); return; }
+      if (k === 'o') { e.preventDefault(); helpOpen = !helpOpen; saveHelpOpen(); applyHelp(); return; }
       if (k === 'z') {
         e.preventDefault();
         if (extraSel) {
           // Remark line -> same one-shot append as clicking + Add; Rewrite -> same adopt/undo toggle as the
           // existing Swap →/Undo buttons. Neither is a new action, just a keyboard path to the existing one.
-          if (extraSel.type === 'remark') appendRemarkLine(extraSel.idx);
-          else if (adoptedText.has('rewrite')) undoFieldText('rewrite'); else adoptFieldText('rewrite');
+          // v1.4.2: a successful apply (append / adopt) auto-advances via advanceFocus(); undo leaves focus put.
+          if (extraSel.type === 'remark') {
+            if (appendRemarkLine(extraSel.idx)) advanceFocus();
+          } else if (adoptedText.has('rewrite')) {
+            undoFieldText('rewrite');
+          } else if (adoptFieldText('rewrite')) {
+            advanceFocus();
+          }
           return;
         }
-        swap(n);
+        // v1.4.2: swapping (not undoing) auto-advances to the next translation,
+        // matching how the "3" key already advances after scoring in Module 1.
+        if (adopted.has(n)) {
+          swap(n); // undo direction — focus stays exactly where it is
+        } else {
+          Promise.resolve(swap(n)).then((ok) => { if (ok) advanceFocus(); });
+        }
         return;
       }
       if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
