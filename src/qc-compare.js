@@ -38,6 +38,20 @@
   function QCCompare(Utils) {
     const TAG = '[QC Compare / 质检对比]';
     const VERSION = TL.SCRIPT_VERSION;
+
+    // Read-only reflection of Remark Options' check mode (v1.4.1). Remark
+    // Composer never runs on /quality_ pages (see its own start(), which
+    // bails out there), so this page has no live check state of its own —
+    // it just reads the same localStorage key remark-composer.js's
+    // SCORE_CHECK_KEY writes, duplicated here as a plain string since that
+    // module's internals aren't exported.
+    const QC_CHECK_MODES = ['label', 'submit', 'off'];
+    const QC_CHECK_STYLES = {
+      label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
+      submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
+      off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
+    };
+    const QC_CHECK_KEY = 'trans-tool:nova-score-check-v1';
     const DEBUG = false;
     function log(msg) { if (DEBUG) console.log(`${TAG} ${msg}`); }
 
@@ -72,6 +86,7 @@
     let diffNums = [];           // trans numbers currently disagreeing (for the summary count)
     let adopted = new Map();     // adopted Trans -> the original Annotator 1 value (was/undo); cleared on a row change
     let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
+    let checkPillEl = null;      // read-only Check Icon pill, shown while the Legend is hidden (v1.4.1)
     let helpOpen = true;         // whether the panel help text is expanded (default expanded so the intro is fully visible)
     let labelBusy = false;       // guards against double-firing while a label-menu click is mid-flight
 
@@ -1198,6 +1213,12 @@
           background: #fafbfc; color: #1f2430; font-size: 10px; font-weight: 700;
           padding: 0 3px; margin: 0 1px;
         }
+        #qc-check-pill {
+          position: fixed; left: 16px; bottom: 100px; z-index: 2147483647;
+          font: 12px/1 -apple-system,"Segoe UI",sans-serif; font-weight: 700;
+          cursor: default; border-radius: 18px; padding: 8px 13px;
+          box-shadow: 0 2px 10px rgba(0,0,0,.12);
+        }
       `;
       document.head.appendChild(s);
     }
@@ -1244,7 +1265,37 @@
       makePanelDraggable(p, p.querySelector('#qc-head'), toggle);
       applySavedPos(p); // use the remembered position if there is one (otherwise default top-center)
       updatePanelHeader(1, 2); // default header (assumes Annotator 1); renderBadges corrects it to the actual tab
+      injectCheckPill();
       applyHelp();
+    }
+
+    // ---------- Closed-state Check Icon pill (read-only; same corner/offset
+    // as Remark Options' own pill, left:16px;bottom:100px, for visual
+    // consistency — the two never coexist in the DOM since Remark Composer
+    // doesn't load on /quality_ pages) ----------
+    function injectCheckPill() {
+      if (document.getElementById('qc-check-pill')) return;
+      const pill = document.createElement('button');
+      pill.id = 'qc-check-pill';
+      pill.title = 'Check mode set on the annotation page';
+      document.body.appendChild(pill);
+      checkPillEl = pill;
+      updateCheckPill();
+    }
+
+    function updateCheckPill() {
+      if (!checkPillEl) return;
+      let mode = 'label';
+      try {
+        const idx = QC_CHECK_MODES.indexOf(localStorage.getItem(QC_CHECK_KEY));
+        mode = idx === -1 ? 'label' : QC_CHECK_MODES[idx];
+      } catch (e) {}
+      const s = QC_CHECK_STYLES[mode];
+      checkPillEl.textContent = s.text;
+      checkPillEl.style.background = s.bg;
+      checkPillEl.style.color = s.fg;
+      checkPillEl.style.border = `1px solid ${s.border}`;
+      checkPillEl.style.display = helpOpen ? 'none' : 'block';
     }
     const QC_POS_KEY = 'trans-tool:nova-qc-pos-v1';
     function applySavedPos(p) {
@@ -1269,6 +1320,7 @@
       const tg = panelEl.querySelector('#qc-toggle');
       if (help) help.style.display = helpOpen ? 'block' : 'none';
       if (tg) tg.textContent = helpOpen ? '▾' : '▸';
+      updateCheckPill(); // shows/hides the read-only Check Icon pill (v1.4.1) opposite the Legend
     }
     // Drag the header to move the panel (clicking the help toggle doesn't drag); switches to left/top positioning after being dragged.
     function makePanelDraggable(p, head, ignoreEl) {

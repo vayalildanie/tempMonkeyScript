@@ -44,6 +44,14 @@
     //   'submit' — same blocking, but a clean Enter also synthesizes Space to actually submit
     //   'off'    — no check at all, Enter always proceeds untouched
     const CHECK_MODES = ['label', 'submit', 'off'];
+    // Shared by the popover's check badge (updateCheckBadge) and the
+    // closed-state pill (updatePillIcon, added in v1.4.1) so both always
+    // agree on icon/label/color for the current mode.
+    const CHECK_STYLES = {
+      label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
+      submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
+      off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
+    };
     let checkModeIdx = 0; // overwritten in start() from SCORE_CHECK_KEY if a saved mode exists
     const SCORE_CHECK_KEY = 'trans-tool:nova-score-check-v1';
     function loadSavedCheckModeIdx() {
@@ -83,6 +91,7 @@
     let bgEl = null;               // #rmd-edit-bg — the non-interactive highlight backdrop underneath it
     let popover = null, paletteEl = null;
     let checkBadgeEl = null;       // shows the current check mode in the popover header
+    let pillEl = null;             // closed-state pill shown while the popover is hidden (v1.4.1)
     let pinned = false;            // true once the user has manually dragged the popover — stop auto-repositioning it
     let lastMouseX = window.innerWidth / 2, lastMouseY = 150; // where the popover appears when opened via O
     let lastRowSig = '';
@@ -168,7 +177,9 @@
 
     // Append a token to our own editable textarea, then mirror the result
     // into NOVA's real (React-controlled) Remarks field via the native
-    // setter, so both stay in sync.
+    // setter, so both stay in sync. Shared by every token producer: the
+    // chip palette's click handler, and the quote flow (tryQuoteSelection,
+    // below), which builds its token as `Trans N "<selected text>"`.
     function appendToken(token, kind) {
       if (!previewEl) return;
       const cur = previewEl.value.replace(/\s+$/, '');
@@ -397,6 +408,22 @@
     // Checking which TransN container(s) the range intersects is forgiving
     // about exactly where within the block the boundary resolved to, while
     // still refusing a selection that actually spans two translations.
+    // ---------- Quoting a selection (Q key, wired in onKeyDown below) ----------
+    // Flow: read the current browser selection -> confirm it lands inside
+    // exactly one Trans N module -> build a `Trans N "<selected text>"`
+    // token via appendToken() above -> clear the selection so it doesn't
+    // linger highlighted after the quote is inserted.
+    //
+    // Known defects, documented here but not fixed in v1.4.1:
+    //   - `text` is interpolated into the token unescaped (see the
+    //     `Trans ${transNum} "${text}"` line below) — a selection that
+    //     itself contains a `"` character produces a malformed token.
+    //   - No guard against inserting the same quote twice: pressing Q
+    //     twice on an unchanged/overlapping selection appends the token
+    //     twice.
+    //   - Multi-line selections keep their raw newlines inside the token
+    //     (only leading/trailing whitespace is trimmed), so a
+    //     multi-paragraph quote reads as a messy multi-line remark.
     function tryQuoteSelection() {
       const selObj = window.getSelection();
       const text = selObj ? selObj.toString().trim() : '';
@@ -430,6 +457,7 @@
     // ---------- Open / close ----------
     function enter() {
       active = true;
+      updatePillIcon(); // hides the pill now that the popover is open
       document.body.classList.add('rmd-active'); // yields the keyboard to us — Module 1 checks this class
       // Load whatever's already in NOVA's Remarks field for this row (e.g.
       // reopening after typing something, or an existing remark) instead of
@@ -462,6 +490,7 @@
       document.body.classList.remove('rmd-active');
       if (popover) popover.style.display = 'none';
       markTransTitles(false);
+      updatePillIcon(); // shows the pill now that the popover is closed
     }
     function toggle() { if (active) exit(); else enter(); }
 
@@ -677,6 +706,12 @@
           background: linear-gradient(135deg, transparent 0 50%, #c2c6d0 50% 60%,
                       transparent 60% 70%, #c2c6d0 70% 80%, transparent 80% 100%);
         }
+        #rmd-check-pill {
+          position: fixed; left: 16px; bottom: 100px; z-index: 2147483647;
+          font: 12px/1 -apple-system,"Segoe UI",sans-serif; font-weight: 700;
+          cursor: pointer; border-radius: 18px; padding: 8px 13px;
+          box-shadow: 0 2px 10px rgba(0,0,0,.12);
+        }
       `;
       document.head.appendChild(s);
     }
@@ -734,6 +769,37 @@
       makeDraggable(p);
       const resizeHandle = p.querySelector('#rmd-resize-handle');
       if (resizeHandle) makePopoverResizable(p, resizeHandle);
+      injectPill();
+    }
+
+    // ---------- Closed-state pill (mirrors Scoring Shortcuts' #tl-score-pill
+    // pattern — scoring-shortcuts.js:786-797 — stacked directly above it at
+    // bottom:100px vs its bottom:58px so the two never overlap) ----------
+    // Clicking it opens Remark Options via the exact same toggle() used by
+    // the O key (see onKeyDown's CFG.keyOpen branch below), so there is
+    // exactly one way Remark Options actually opens.
+    function injectPill() {
+      if (document.getElementById('rmd-check-pill')) return;
+      const pill = document.createElement('button');
+      pill.id = 'rmd-check-pill';
+      pill.title = 'Open Remark Options (O)';
+      pill.addEventListener('click', toggle);
+      document.body.appendChild(pill);
+      pillEl = pill;
+      updatePillIcon();
+    }
+
+    // Renders the pill from the same CHECK_STYLES table updateCheckBadge()
+    // uses, and shows/hides it based on `active` — visible only while
+    // Remark Options is closed.
+    function updatePillIcon() {
+      if (!pillEl) return;
+      const s = CHECK_STYLES[CHECK_MODES[checkModeIdx]];
+      pillEl.textContent = s.text;
+      pillEl.style.background = s.bg;
+      pillEl.style.color = s.fg;
+      pillEl.style.border = `1px solid ${s.border}`;
+      pillEl.style.display = active ? 'none' : 'block';
     }
 
     // ====================================================================
@@ -747,16 +813,12 @@
     // still reads as a deliberate "on-brand" third state.
     function updateCheckBadge() {
       if (!checkBadgeEl) return;
-      const styles = {
-        label: { text: '🛡️ Label Check', bg: '#ebfbee', fg: '#2b8a3e', border: '#b2f2bb' },
-        submit: { text: '⚔️ Submit Check', bg: '#eef1fb', fg: '#3b5bdb', border: '#bac8f7' },
-        off: { text: '⚠️ Check OFF', bg: '#fff0f0', fg: '#c92a2a', border: '#ffc9c9' },
-      };
-      const s = styles[CHECK_MODES[checkModeIdx]];
+      const s = CHECK_STYLES[CHECK_MODES[checkModeIdx]];
       checkBadgeEl.textContent = s.text;
       checkBadgeEl.style.background = s.bg;
       checkBadgeEl.style.color = s.fg;
       checkBadgeEl.style.border = `1px solid ${s.border}`;
+      updatePillIcon(); // keep the closed-state pill (v1.4.1) in sync
     }
 
     // The label-completeness check, run on every Enter press (and by the
