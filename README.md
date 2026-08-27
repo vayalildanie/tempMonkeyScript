@@ -10,17 +10,21 @@ clicks a human would otherwise make by hand, and shows its work clearly
 enough that the annotator can see and override anything before submitting.
 
 One deliberate exception, added in `v1.3.2` (moved onto a different key in
-`v1.3.3`, made a 3-way cycle in `v1.3.4`): the submit blocker *prevents* an
-action rather than performing one. In its default Label Check mode it only
-suppresses the Enter keystroke — it never finds or clicks the submit button
-— so pressing Space, or clicking Submit with the mouse, always works.
-Submit Check mode is the one deliberate case where the script *does* submit
-for you (by synthesizing that same Space press) rather than just blocking,
-and `Z` cycles through Label Check / Submit Check / Check Off.
+`v1.3.3`, made a 3-way cycle in `v1.3.4`, moved from Scoring Shortcuts into
+Remark Composer in `v1.4.0`): the submit blocker *prevents* an action rather
+than performing one. In its default Label Check mode it only suppresses the
+Enter keystroke — it never finds or clicks the submit button — so pressing
+Space, or clicking Submit with the mouse, always works. Submit Check mode is
+the one deliberate case where the script *does* submit for you (by
+synthesizing that same Space press) rather than just blocking, and `Z`
+cycles through Label Check / Submit Check / Check Off.
 
-It's one file, single-install (open Tampermonkey, paste the script), with
-`@grant none` — it never gains any Tampermonkey API access beyond the normal
-browser DOM, by design.
+As of `v1.4.0` this is a multi-file install: one small entry-point
+`.user.js` file that `@require`s the module files under `src/` straight from
+this GitHub repo. There's still no build step or bundler — it's plain files
+loaded in sequence — and `@grant none` stays: the script never gains any
+Tampermonkey API access beyond the normal browser DOM, by design. See
+"Install" and "Code layout" below.
 
 ## What it does
 
@@ -39,23 +43,51 @@ page:
    from scratch, by keyboard or with one click.
 
 It also holds back Enter-to-submit while a populated translation is still
-missing a complete label, and keeps the Remarks field as tall as its content
-so a long remark never hides inside a scrollbox.
+missing a complete label.
 
 ## Install
 
 1. Open Tampermonkey → create a new script.
 2. Paste the full contents of `annotation-scoring-shortcuts.user.js`.
-3. Save. The on-page panel's version badge should match the `@version` in
-   the file header.
+3. Save. Tampermonkey fetches the `@require`d files under `src/` from this
+   repo's `main` branch automatically — nothing else to paste.
+4. The on-page panel's version badge should match the `@version` in the file
+   header.
+
+Requires this repo to stay **public** — `@require` fetches over plain HTTPS
+with no authentication, so a private repo would break every installed copy.
+
+## Code layout
+
+```
+annotation-scoring-shortcuts.user.js   entry point: @require list + boot sequence only
+src/utils.js                           shared DOM helpers + the toast/keycap UI
+src/trans-cursor.js                    shared active-translation cursor (Scoring Shortcuts + QC Compare)
+src/scoring-shortcuts.js               Module 1
+src/remark-composer.js                 Module 2 (also owns the submit-check system, see below)
+src/qc-compare.js                      Module 3
+```
+
+`@require` has no code-splitting — every file above downloads and executes
+on every matching page load, regardless of URL. Which module is actually
+*active* on a given page is still decided at runtime, the same way it always
+was: each module's own `start()` checks `location.href` and bails out if it
+doesn't apply. Editing a module means editing its `src/*.js` file and
+pushing to `main` — Tampermonkey picks up the change the next time it
+re-checks the `@require`d URL (see its own update-check settings; this repo
+pins `@require` to the `main` branch rather than a specific commit, so there
+is no per-release URL to bump, at the cost of that fetch being on
+Tampermonkey's own schedule rather than instant).
 
 ## Not yet built
 
-**Module 4 — Single-model Reference.** On single-model batches the platform
-shows only one translation per item, with no other models' phrasing to
-compare against. The plan is a strictly read-only lookup panel — never
-touching scoring, labels, or the submit button — driven by an offline-built
-`ref.json` file. Not started; there's no code for it in this file yet.
+**Module 4 — Single-model Reference** (internally referred to in planning as
+"Histo_DB"). On single-model batches the platform shows only one translation
+per item, with no other models' phrasing to compare against. The plan is a
+strictly read-only lookup panel — never touching scoring, labels, or the
+submit button — driven by an offline-built `ref.json` file. Not started;
+there's no code for it anywhere in this repo yet. Deferred to `v1.5`, after
+the `v1.4.0` module-split refactor.
 
 ## Shortcuts (current)
 
@@ -64,7 +96,13 @@ score page and bail out entirely on `/quality_` URLs; Module 3 owns the
 `/quality_` page and is unclaimed everywhere else. None of the three fire
 while a text field has focus.
 
-**Module 1 — Scoring Shortcuts** (score page)
+As of `v1.4.0`, Module 1 owns only the scoring keyboard; the submit-check
+system (`Z` / `Enter`) that used to live in Module 1 moved into Module 2
+wholesale, and `Alt` (a second, additive check trigger) was dropped
+entirely rather than carried along. See `src/scoring-shortcuts.js` and
+`src/remark-composer.js`'s header comments for the full reasoning.
+
+**Module 1 — Scoring Shortcuts** (score page; `src/scoring-shortcuts.js`)
 
 | Key | Effect |
 |---|---|
@@ -75,20 +113,28 @@ while a text field has focus.
 | `X` | Clear the active translation's score, stay put |
 | `↑` / `↓` | Move the active translation |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
-| `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
-| `Alt` | Run the check now (same as a clean/blocked Enter), without submitting on its own even in Submit Check mode |
 | `P` | Show/hide the shortcuts panel — works even while shortcuts are OFF |
 | `Esc` | Cancel an in-progress label pick |
 
-**Module 2 — Remark Options** (score page; internal module name is still `RemarkComposer`. Module 1 yields the keyboard to it entirely while its popover is open, by checking for `body.rmd-active`)
+**Module 2 — Remark Options** (score page; `src/remark-composer.js`,
+internal module name is still `RemarkComposer`. Module 1 yields the keyboard
+to it entirely while its popover is open, by checking for `body.rmd-active`
+— but `Z`/`Enter` below work regardless of whether the popover is open,
+since the submit check is a page-level guard, not a composer-UI feature)
 
 | Key | Effect |
 |---|---|
-| `O` | Open/close the Remark Options popover |
+| `O` | Open/close the Remark Options window |
+| `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
+| `Enter` | Run the check now, safely — blocks on an incomplete label per the current check mode; in Submit Check mode, a clean pass also submits (synthesizes Space) |
 | `Q` | Quote the current selection (or, with nothing selected, focus the composer's edit box) |
-| `Esc` | Close the popover, or close its Settings panel if that's open |
+| `Esc` | Close the window, or close its Settings panel if that's open |
 
-**Module 3 — QC Compare** (`/quality_` page)
+The window's position and size now persist across reloads, the same way
+Module 1's panel always has (see "Storage keys" below) — previously this
+window reset to a fixed size every time it was reopened.
+
+**Module 3 — QC Compare** (`/quality_` page; `src/qc-compare.js`)
 
 | Key | Effect |
 |---|---|
@@ -98,8 +144,12 @@ while a text field has focus.
 | `Z` | Swap the active translation to the other annotator's value (press again to swap back); on a selected Remark +Add line, append that line; on Rewrite, swap/undo it the same as its "Swap →"/"Undo" button |
 | `↑` / `↓` | Move the active translation — past the last one, continues into the Remarks +Add lines, then Rewrite |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) |
-| `P` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle |
+| `O` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle (moved from `P` in `v1.4.0`, to match Module 2's open/close key — the two modules are URL-exclusive so there's no clash) |
 | `Esc` | Cancel an in-progress label pick |
+
+Module 3 also auto-selects each annotator's verdict as soon as it scrapes a
+row — Annotator 1 → "1", Annotator 2 → "3" — via `ensureVerdict()`; this is
+pre-existing behavior, unchanged by the `v1.4.0` split.
 
 ## Storage keys
 
@@ -109,10 +159,16 @@ rule below.
 
 - **Module 1:** `trans-tool:nova-score-pos-v3` (panel position),
   `trans-tool:nova-score-min-v1` (minimized state),
-  `trans-tool:nova-score-size-v2` (panel width),
-  `trans-tool:nova-score-check-v1` (submit check mode — added `v1.3.5`).
+  `trans-tool:nova-score-size-v2` (panel width).
 - **Module 2:** `trans-tool:nova-remark-chips` (chip configuration; falls
-  back to 30 built-in defaults if absent or invalid).
+  back to 30 built-in defaults if absent or invalid),
+  `trans-tool:nova-score-check-v1` (submit check mode — added `v1.3.5`,
+  kept under its original `nova-score-*` name in `v1.4.0` even though the
+  check system moved to this module, since it's a stored user preference
+  and renaming it would silently reset existing installs' saved mode),
+  `trans-tool:nova-remark-pos-v1` / `trans-tool:nova-remark-size-v1` (the
+  Remark Options window's position/size — new in `v1.4.0`; previously this
+  window reset to a fixed size on every open and never persisted position).
 - **Module 3:** `trans-tool:nova-qc-pos-v1` (panel position only — the
   help/legend expanded state is not persisted, and resets open on every
   reload).
@@ -124,19 +180,33 @@ Invariants the script is expected to keep, regardless of what else changes:
 - **`@grant none` stays.** The script never gains Tampermonkey API access
   beyond the normal browser DOM — a deliberate trust boundary, and part of
   why annotators can trust it isn't doing anything hidden.
-- **Stays a single `.user.js` file.** No build step, no bundler — editing
-  and installing stays "open file, edit, paste into Tampermonkey."
+- **Multi-file, loaded via `@require` — no build step, no bundler.** Until
+  `v1.4.0` this was a single pasteable `.user.js` file; it's now one small
+  entry point plus the module files under `src/`, each fetched straight from
+  this GitHub repo (see "Code layout" above). Still plain files with no
+  build step or bundler — editing a module means editing its `src/*.js`
+  file and pushing to `main`, not running a build.
 - **DOM selectors are functional contracts, not prose to translate.**
   Several selectors match literal Chinese text the live site renders (e.g.
   `[data-module-name="笔记外文翻译"]`). These are not comments — they're how
   the script finds elements. Only comments and log tags get the English
   rewrite treatment; selector strings never do.
-- **Modules stay behaviorally isolated.** The three modules don't share state.
-  Two pieces of code are the sanctioned exceptions — shared utility
-  functions (`Utils`: click simulation, the poll-until-condition helper, the
-  native-controlled-input value setter) and the cross-module `TransCursor`
-  that gives Module 1 and Module 3 identical arrow-key semantics (added
-  `v1.3.2`) — but no module reads another module's internal state directly.
+- **Modules stay behaviorally isolated.** The three modules don't share
+  mutable state. Three things are the sanctioned exceptions:
+  - shared utility functions (`Utils`: click simulation, the
+    poll-until-condition helper, the native-controlled-input value setter,
+    the shared toast/keycap UI);
+  - the cross-module `TransCursor` that gives Module 1 and Module 3
+    identical arrow-key semantics (added `v1.3.2`);
+  - Module 1's `checkCompleteness()` (added `v1.4.0`) — a one-way, read-only
+    query Module 2 calls to ask about label completeness, so its relocated
+    submit-check system doesn't have to duplicate or reach into Module 1's
+    own DOM-reading logic. Module 1 has no reciprocal dependency on Module 2
+    and no state crosses the boundary, which is what keeps this narrower
+    than genuinely shared state.
+
+  Beyond those three, no module reads another module's internal state
+  directly.
 - **Comment convention:** English first; original Chinese kept in
   parentheses immediately after, for any comment carrying real design
   rationale (not for every line) — e.g. `// Collapse other cascaders first,
@@ -144,10 +214,14 @@ Invariants the script is expected to keep, regardless of what else changes:
   Console log tags follow the same pattern:
   `[Scoring Shortcuts / 打分快捷键]`.
 - **Version bump convention:** the on-page badge and `@version` header move
-  together — every module's badge reads from one shared `SCRIPT_VERSION`
-  constant rather than keeping its own, fixing a real drift bug from early
-  in the project (the `@version` header once said `1.2.4` while Module 1's
-  own badge constant still said `v1.2.1`).
+  together — every module's badge reads from one shared version value rather
+  than keeping its own, fixing a real drift bug from early in the project
+  (the `@version` header once said `1.2.4` while Module 1's own badge
+  constant still said `v1.2.1`). As of `v1.4.0` that value is
+  `TL.SCRIPT_VERSION`, set once in the entry point before any module is
+  instantiated (previously a single `SCRIPT_VERSION` constant, closed over
+  by all three modules when they were nested in one file — same guarantee,
+  different mechanism now that they're separate files).
 
 ## How it stays careful — mechanism notes
 
@@ -199,6 +273,75 @@ around it:
   arrow-key navigation later, in `v1.3.2`.)
 
 ## Version history
+
+### `v1.4.0` — Module split into `@require`d files; submit check moved to Remark Composer; Remarks auto-grow removed
+
+This is the tech-debt refactor: the script was one 3,851-line file with
+three modules nested in a single closure, which had become hard to read and
+was actively coupling behavior across modules that shouldn't have been
+coupled. Nothing in this release changes the platform-facing scoring
+behavior of Modules 1/3 beyond what's listed below — it's a structural
+split plus the specific reassignments requested alongside it.
+
+**The file split into `src/utils.js`, `src/trans-cursor.js`,
+`src/scoring-shortcuts.js`, `src/remark-composer.js`, and
+`src/qc-compare.js`**, each loaded via `@require` from this repo; the
+`.user.js` file is now just the `@require` list and the boot sequence. Each
+file wraps its body in its own IIFE and publishes through a single `window.TL`
+namespace object, since `@require`d files share one global scope with no
+code-splitting — every file downloads and executes on every page load
+regardless of URL, same as before; only which module's `start()` decides to
+act on a given URL was ever conditional, and that's unchanged. See "Code
+layout" above.
+
+**The submit-check system moved from Scoring Shortcuts to Remark Composer,
+wholesale.** `Z` (cycle Label Check / Submit Check / Check Off) and `Enter`
+(run the check) now live in `src/remark-composer.js`, including the
+empty-row auto-advance timer and the check-mode badge (now shown in the
+Remark Options window's header instead of the scoring panel's). Remark
+Composer reads label-completeness through one new read-only method Scoring
+Shortcuts exposes, `checkCompleteness()`, rather than duplicating or
+reaching into Scoring Shortcuts' own DOM-reading internals — see "Ground
+rules" above for why this is a narrower exception than genuinely shared
+state. The persisted check-mode `localStorage` key
+(`trans-tool:nova-score-check-v1`) was deliberately **not** renamed, since
+it's a stored user preference and renaming it would silently reset every
+existing install's saved mode.
+
+**`Alt` was dropped entirely** as a check trigger — it was not carried into
+Remark Composer. `Enter` is now the only way to run the check.
+
+**Scoring Shortcuts' final keyboard surface:** `C` / `X` / `1`–`9` / arrows /
+`P` only. `Z`, `Enter`, and `Alt` are gone from this module (see above).
+
+**The Remark Options window is now a persisted, adjustable window** like
+Scoring Shortcuts' own panel, instead of resetting to a fixed size on every
+open: position and size survive a reload (`trans-tool:nova-remark-pos-v1`,
+`trans-tool:nova-remark-size-v1`), and its corner-drag resize now sets both
+width and height (previously width-only reasoning didn't apply here — its
+content isn't reflowing text with an auto-fit height the way Scoring
+Shortcuts' panel is).
+
+**QC Compare's help/legend toggle moved from `P` to `O`**, matching Remark
+Composer's open/close key so both "adjustable window" modules share the same
+open/close mnemonic. Safe because the two modules are URL-exclusive — QC
+Compare only runs on `/quality_` pages, Remark Composer never does — so
+there's no runtime key clash either way this was decided. QC Compare's
+pre-existing auto-verdict-select rule (Annotator 1 → "1", Annotator 2 → "3",
+via `ensureVerdict()`) is unchanged; it already existed and already only ran
+on the same pages, so nothing needed to move.
+
+**The "keep the Remarks field as tall as its content" feature (v1.3.2) was
+removed outright**, along with `Utils.autoGrowTextarea` and the
+`GROWN_EVENT` plumbing QC Compare's highlight overlay used to listen for
+(that overlay still re-syncs correctly from its other triggers — typing,
+scrolling, tab switches, row changes — so nothing else depended on the
+removed event). The Remarks field is back to the platform's native small,
+internally-scrolling textarea on both pages.
+
+**Deferred:** Module 4 (Single-model Reference, "Histo_DB" in planning —
+see "Not yet built" above) was going to be the next feature added on top of
+the pre-split codebase; it's now deferred to `v1.5`, after this refactor.
 
 ### `v1.3.5` — Check mode persists, legends simplified, Alt check trigger, Remark/Rewrite keyboard selection
 
