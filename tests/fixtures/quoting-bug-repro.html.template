@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>quoting bug repro</title>
+    <!--
+      Not a runnable fixture yet — this is a .template file on purpose.
+
+      To use it:
+      1. On the real site, get to a row with at least one populated
+         translation (score page, not /quality_).
+      2. In DevTools' Inspector, find the container that holds all the
+         [data-module-name="TransN"] blocks AND [data-module-name="Remarks"]
+         — the smallest ancestor of both, since tryQuoteSelection()
+         (src/remark-composer.js) needs a translation block to select text
+         inside of, and the Remarks field to write the quote into. Right-
+         click it -> Copy > Outer HTML (or `copy(el.outerHTML)` in the
+         Console). See tests/fixtures/README.md for the full capture
+         methodology.
+      3. Scrub the translation text and any remark/reviewer content —
+         replace with placeholder text of similar length and shape, keep
+         structure/classes/data-* attributes real.
+      4. Paste the scrubbed markup into <body> below, in place of the
+         placeholder comment.
+      5. Rename this file to quoting-bug-repro.html (drop the .template
+         suffix) and open it in Firefox.
+      6. Select text inside a translation block, press Q, and reproduce the
+         bug. src/remark-composer.js's tryQuoteSelection() already documents
+         three known, unfixed defects inline (unescaped `"` in the quoted
+         text, no duplicate-quote guard, raw newlines kept in multi-line
+         quotes) — check whether the bug you're chasing is one of those
+         before assuming it's something new.
+    -->
+  </head>
+  <body>
+    <!-- PASTE SCRUBBED, CAPTURED MARKUP HERE: the container holding every
+         [data-module-name="TransN"] block plus [data-module-name="Remarks"] -->
+
+    <script src="../../src/utils.js"></script>
+    <script src="../../src/trans-cursor.js"></script>
+    <script src="../../src/scoring-shortcuts.js"></script>
+    <script src="../../src/remark-composer.js"></script>
+    <script src="../../src/qc-compare.js"></script>
+    <script src="../../annotation-scoring-shortcuts.user.js"></script>
+  </body>
+</html>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>trans-tool dev harness</title>
+    <!--
+      Open this file directly in Firefox (double-click, or File > Open
+      File) — no Tampermonkey install, no local server, no login. It loads
+      the real script exactly the way Tampermonkey's @require chain does:
+      the five src/*.js files in order, then the entry point file, so
+      bootAll() runs for real against whatever markup is in <body> below.
+
+      The script has @grant none and makes zero Tampermonkey-specific API
+      calls, so it works as plain browser JS via ordinary <script> tags —
+      nothing here is a stand-in or mock of the real script, it IS the real
+      script.
+
+      Workflow: paste captured/scrubbed workbench markup into <body> (see
+      README.md's capture steps), open this file, try things, edit
+      src/*.js, reload to see the change. Reloading re-runs the entire boot
+      sequence fresh, the same as a real page reload would.
+    -->
+  </head>
+  <body>
+    <!-- PASTE SCRUBBED, CAPTURED WORKBENCH MARKUP HERE -->
+
+    <script src="../../src/utils.js"></script>
+    <script src="../../src/trans-cursor.js"></script>
+    <script src="../../src/scoring-shortcuts.js"></script>
+    <script src="../../src/remark-composer.js"></script>
+    <script src="../../src/qc-compare.js"></script>
+    <script src="../../annotation-scoring-shortcuts.user.js"></script>
+  </body>
+</html>
