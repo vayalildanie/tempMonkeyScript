@@ -155,12 +155,7 @@
     }
 
     function scoreModule(n) { return document.querySelector(`[data-module-name="Trans${n} Score"]`); }
-    function readScore(n) {
-      const mod = scoreModule(n);
-      if (!mod) return '';
-      const item = mod.querySelector('.ant-select-selection-item');
-      return item ? item.textContent.trim() : ''; // empty string = not scored
-    }
+    function readScore(n) { return Utils.readSelected(scoreModule(n)); } // empty string = not scored
     // Trans numbers on this row that have both a translation and a scoring control (empty translations aren't compared).
     function scoreableTrans() {
       const out = [];
@@ -237,16 +232,11 @@
     const SPLIT = '__RC_CASCADER_SPLIT__'; // the level separator token in the platform's data-path-key
     const ADJACENT_GAP_PX = 120;           // threshold (px) for "the dropdown hugs this select"
 
-    function popupsVisible() {
-      return Array.from(document.querySelectorAll('.ant-select-dropdown'))
-        .filter((p) => getComputedStyle(p).display !== 'none');
-    }
-    // Gap from the dropdown's top to the select's bottom (a dropdown always hugs its own trigger) -> distinguishes this control's dropdown from another Trans's.
-    function edgeGap(popup, sr) {
-      const pr = popup.getBoundingClientRect();
-      if ((popup.className || '').indexOf('placement-top') >= 0) return Math.abs(pr.bottom - sr.top);
-      return Math.abs(pr.top - sr.bottom);
-    }
+    // popupsVisible/edgeGap/closeOpenCascaders are shared with Scoring
+    // Shortcuts — same cascader controls, same "which popup is actually
+    // mine" problem — see Utils.
+    const popupsVisible = Utils.popupsVisible;
+    const edgeGap = Utils.edgeGap;
     // Restore an option's data-path-key into a display path (SPLIT -> "/").
     // Key point: a label itself may contain "/" (e.g. "Unauthentic Vocabulary / Collocations"), so never split levels via value.split('/'),
     //   use path-key as the authoritative separator to restore, then compare to the target on "/" boundaries. The level
@@ -285,17 +275,7 @@
       }
       return best;
     }
-    // Close every "expanded" cascader (via aria-expanded=true) to prevent stale-dropdown cross-talk.
-    async function closeOpenCascaders() {
-      const opens = Array.from(document.querySelectorAll('input[aria-expanded="true"]'));
-      for (const inp of opens) {
-        const sel = inp.closest('.ant-select');
-        if (sel) Utils.clickEl(sel.querySelector('.ant-select-selector') || sel);
-      }
-      if (opens.length) {
-        await Utils.waitFor(() => document.querySelectorAll('input[aria-expanded="true"]').length === 0, 700).catch(() => {});
-      }
-    }
+    const closeOpenCascaders = Utils.closeOpenCascaders;
 
     // Write value (e.g. "2 Points/Authenticity/Unauthentic Vocabulary / Collocations") into Trans n's cascader.
     async function writeCascade(n, value) {
@@ -1291,18 +1271,15 @@
 
     const QC_POS_KEY = 'trans-tool:nova-qc-pos-v1';
     function applySavedPos(p) {
-      try {
-        const raw = localStorage.getItem(QC_POS_KEY);
-        if (!raw) return;
-        const o = JSON.parse(raw);
-        if (o && typeof o.left === 'number' && typeof o.top === 'number') {
-          p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
-          p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
-        }
-      } catch (e) {}
+      const o = Utils.readJSON(QC_POS_KEY);
+      if (o && typeof o.left === 'number' && typeof o.top === 'number') {
+        p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
+        p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
+      }
     }
     function savePos(p) {
-      try { const r = p.getBoundingClientRect(); localStorage.setItem(QC_POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) })); } catch (e) {}
+      const r = p.getBoundingClientRect();
+      Utils.writeJSON(QC_POS_KEY, { left: Math.round(r.left), top: Math.round(r.top) });
     }
     // Whether the Legend was left open or closed, persisted (v1.4.2) so a
     // reviewer who collapses it doesn't see it re-expand on every reload.
@@ -1325,29 +1302,14 @@
       if (help) help.style.display = helpOpen ? 'block' : 'none';
       if (tg) tg.textContent = helpOpen ? '▾' : '▸';
     }
-    // Drag the header to move the panel (clicking the help toggle doesn't drag); switches to left/top positioning after being dragged.
+    // Drag the header to move the panel (clicking the help toggle doesn't
+    // drag); switches to left/top positioning after being dragged. Drag
+    // mechanics are shared with Scoring Shortcuts and Remark Composer —
+    // see utils.js.
     function makePanelDraggable(p, head, ignoreEl) {
-      let ox = 0, oy = 0;
-      function onMove(e) {
-        const r = p.getBoundingClientRect(), pad = 4;
-        const left = Math.max(pad, Math.min(window.innerWidth - r.width - pad, e.clientX - ox));
-        const top = Math.max(pad, Math.min(window.innerHeight - r.height - pad, e.clientY - oy));
-        p.style.left = left + 'px'; p.style.top = top + 'px';
-        p.style.right = 'auto'; p.style.bottom = 'auto';
-        p.style.transform = 'none'; // dragged -> cancel the centering transform, switch to absolute left/top
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        savePos(p); // remember where it was dropped
-      }
-      head.addEventListener('mousedown', (e) => {
-        if (ignoreEl && (e.target === ignoreEl || ignoreEl.contains(e.target))) return; // clicking the collapse toggle doesn't drag
-        e.preventDefault();
-        const r = p.getBoundingClientRect();
-        ox = e.clientX - r.left; oy = e.clientY - r.top;
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
+      Utils.makeDraggable(p, head, {
+        ignore: (e) => ignoreEl && (e.target === ignoreEl || ignoreEl.contains(e.target)), // clicking the collapse toggle doesn't drag
+        onDrop: () => savePos(p), // remember where it was dropped
       });
     }
 
@@ -1496,9 +1458,9 @@
         if (!badge || activeTabIndex() !== 0) return;
         e.preventDefault(); e.stopPropagation();
         const mod = badge.closest('[data-module-name]');
-        const m = mod && /^Trans(\d+) Score$/.exec(mod.getAttribute('data-module-name') || '');
-        if (!m) return;
-        adoptOther(parseInt(m[1], 10));
+        const n = Utils.transNumFromModuleName(mod, ' Score');
+        if (n === null) return;
+        adoptOther(n);
       }, true);
       // Typing / scrolling in the platform Remarks/Rewrite field -> live-sync the Trans N highlight overlay.
       const isFieldTA = (el) => el && el.tagName === 'TEXTAREA' && el.closest

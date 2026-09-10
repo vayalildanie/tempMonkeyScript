@@ -71,12 +71,6 @@
     // Reading the page
     // ====================================================================
 
-    // Every visible (not display:none) cascader dropdown currently open anywhere on the page.
-    function popupsVisible() {
-      return Array.from(document.querySelectorAll('.ant-select-dropdown'))
-        .filter((p) => getComputedStyle(p).display !== 'none');
-    }
-
     // Find a menu item by its data-path-key, but only within one specific popup —
     // never search across popups, or a click could land in the wrong translation's menu.
     function findItemInPopup(popup, pathKey) {
@@ -89,10 +83,7 @@
 
     // Which translation number a given scoring control belongs to, read off
     // its own data-module-name (e.g. "Trans3 Score" -> 3).
-    function transNumberOf(mod) {
-      const m = /^Trans(\d+) Score$/.exec(mod.getAttribute('data-module-name') || '');
-      return m ? parseInt(m[1], 10) : null;
-    }
+    function transNumberOf(mod) { return Utils.transNumFromModuleName(mod, ' Score'); }
 
     // Every scoreable translation's scoring control, in Trans-number order,
     // skipping any translation whose text is empty (nothing to score).
@@ -124,10 +115,7 @@
     }
 
     // The text currently selected/shown in a given scoring control.
-    function readSelected(mod) {
-      const item = mod.querySelector('.ant-select-selection-item');
-      return item ? item.textContent.trim() : '';
-    }
+    const readSelected = Utils.readSelected;
 
     // ====================================================================
     // Submission blocker (added v1.3.2)
@@ -243,31 +231,12 @@
     // Setting a score programmatically
     // ====================================================================
 
-    // Close every cascader dropdown that's currently open (detected via
-    // aria-expanded="true"), by clicking its own trigger to collapse it.
-    // This prevents stale/leftover open dropdowns from re-appearing
-    // alongside the one we're about to drive, or from confusing the
-    // "which popup belongs to my selector" check in findItemNearSelector.
-    async function closeOpenCascaders() {
-      const opens = Array.from(document.querySelectorAll('input[aria-expanded="true"]'));
-      for (const inp of opens) {
-        const sel = inp.closest('.ant-select');
-        if (sel) Utils.clickEl(sel.querySelector('.ant-select-selector') || sel);
-      }
-      if (opens.length) {
-        await Utils.waitFor(() => document.querySelectorAll('input[aria-expanded="true"]').length === 0, 700).catch(() => {});
-      }
-    }
-
-    // Distance between a popup's near edge and its trigger's near edge.
-    // A dropdown always renders flush against its own trigger (just a few
-    // pixels of gap), so this distance is a reliable signal for "does this
-    // popup belong to this exact selector" — see findItemNearSelector.
-    function edgeGap(popup, sr) {
-      const pr = popup.getBoundingClientRect();
-      if ((popup.className || '').indexOf('placement-top') >= 0) return Math.abs(pr.bottom - sr.top);
-      return Math.abs(pr.top - sr.bottom);
-    }
+    // popupsVisible/closeOpenCascaders/edgeGap are shared with QC Compare —
+    // same cascader controls, same "which popup is actually mine" problem —
+    // see Utils.
+    const popupsVisible = Utils.popupsVisible;
+    const closeOpenCascaders = Utils.closeOpenCascaders;
+    const edgeGap = Utils.edgeGap;
 
     // Only trust a popup that renders adjacent to (within this many px of)
     // the selector we just clicked. Same-column rows on other translations
@@ -776,7 +745,7 @@
       resizeHandle.className = 'tl-resize-handle';
       resizeHandle.title = 'Drag to shrink';
       p.appendChild(resizeHandle);
-      makeResizable(p, resizeHandle);
+      Utils.makeResizable(p, resizeHandle, { axes: 'x', minW: MIN_PANEL_W, getMaxW: () => naturalWidth, onDrop: () => saveSize(p) });
       applySavedSize(p);
 
       // Minimize: hide the whole panel, shrink to a pill in the bottom-left
@@ -799,111 +768,55 @@
       minBtn.addEventListener('click', () => setCollapsed(true));
       pill.onclick = () => setCollapsed(false);
       setCollapsed(localStorage.getItem(SCORE_MIN_KEY) === '1');
-      makePanelDraggable(p, p.querySelector('#tl-score-head'));
+      Utils.makeDraggable(p, p.querySelector('#tl-score-head'), { onDrop: () => savePos(p) });
       applySavedPos(p);
       setEnabled(enabled);
       updateSkippedLine();
     }
 
     // —— Panel dragging, resizing, and position/size persistence (localStorage) ——
+    // The drag/resize mechanics themselves (Utils.makeDraggable/makeResizable)
+    // and the viewport clamp are shared with Remark Composer and QC Compare —
+    // see utils.js. What's still local here: the storage keys, the {left,top}/
+    // {w} shapes, and MIN_PANEL_W/naturalWidth — this panel's own decisions.
     const SCORE_POS_KEY = 'trans-tool:nova-score-pos-v3';
     const SCORE_MIN_KEY = 'trans-tool:nova-score-min-v1';
     const SCORE_SIZE_KEY = 'trans-tool:nova-score-size-v2';
     const MIN_PANEL_W = 260; // small enough to still show the header row and its buttons
 
+    const clampIntoView = Utils.clampIntoView;
+
     function applySavedPos(p) {
-      try {
-        const raw = localStorage.getItem(SCORE_POS_KEY);
-        if (!raw) return;
-        const o = JSON.parse(raw);
-        if (o && typeof o.left === 'number' && typeof o.top === 'number') {
-          p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
-          p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
-          clampIntoView(p); // in case the saved position is now off-screen (resolution change, or dragged out of bounds before)
-        }
-      } catch (e) {}
-    }
-    // Pull the panel back inside the viewport: past the right/bottom edge gets pulled back, negative coords get clamped to 0.
-    function clampIntoView(p) {
-      const pad = 4, r = p.getBoundingClientRect();
-      const left = Math.max(pad, Math.min(window.innerWidth - r.width - pad, r.left));
-      const top = Math.max(pad, Math.min(window.innerHeight - r.height - pad, r.top));
-      p.style.left = left + 'px'; p.style.top = top + 'px';
-      p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
+      const o = Utils.readJSON(SCORE_POS_KEY);
+      if (o && typeof o.left === 'number' && typeof o.top === 'number') {
+        p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
+        p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
+        clampIntoView(p); // in case the saved position is now off-screen (resolution change, or dragged out of bounds before)
+      }
     }
     function savePos(p) {
-      try { const r = p.getBoundingClientRect(); localStorage.setItem(SCORE_POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) })); } catch (e) {}
-    }
-    function makePanelDraggable(p, handle) {
-      if (!handle) return;
-      let ox = 0, oy = 0;
-      function onMove(e) {
-        const r = p.getBoundingClientRect(), pad = 4;
-        const left = Math.max(pad, Math.min(window.innerWidth - r.width - pad, e.clientX - ox));
-        const top = Math.max(pad, Math.min(window.innerHeight - r.height - pad, e.clientY - oy));
-        p.style.left = left + 'px'; p.style.top = top + 'px';
-        p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        savePos(p);
-      }
-      handle.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button')) return;
-        e.preventDefault();
-        const r = p.getBoundingClientRect();
-        ox = e.clientX - r.left; oy = e.clientY - r.top;
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
-      });
+      const r = p.getBoundingClientRect();
+      Utils.writeJSON(SCORE_POS_KEY, { left: Math.round(r.left), top: Math.round(r.top) });
     }
 
-    // Right-edge drag, width-only, shrink-only: the panel can be made
-    // narrower than its natural width (down to MIN_PANEL_W) but never wider
-    // — so it can never end up covering more of the workbench than it does
-    // by default, only less. Height is never touched here — it stays
-    // whatever the browser's normal auto-sizing computes for the content at
-    // the current width, so a narrower panel (whose legend wraps onto more
-    // lines) automatically grows tall enough to still show the status and
-    // skipped-translations row, rather than clipping it.
+    // Right-edge drag, width-only, shrink-only (Utils.makeResizable's
+    // axes:'x'): the panel can be made narrower than its natural width
+    // (down to MIN_PANEL_W) but never wider — so it can never end up
+    // covering more of the workbench than it does by default, only less.
+    // Height is never touched — it stays whatever the browser's normal
+    // auto-sizing computes for the content at the current width, so a
+    // narrower panel (whose legend wraps onto more lines) automatically
+    // grows tall enough to still show the status and skipped-translations
+    // row, rather than clipping it.
     function saveSize(p) {
-      try {
-        const r = p.getBoundingClientRect();
-        localStorage.setItem(SCORE_SIZE_KEY, JSON.stringify({ w: Math.round(r.width) }));
-      } catch (e) {}
+      const r = p.getBoundingClientRect();
+      Utils.writeJSON(SCORE_SIZE_KEY, { w: Math.round(r.width) });
     }
     function applySavedSize(p) {
-      try {
-        const raw = localStorage.getItem(SCORE_SIZE_KEY);
-        if (!raw) return;
-        const o = JSON.parse(raw);
-        if (!o || typeof o.w !== 'number') return;
-        const maxW = naturalWidth || o.w;
-        p.style.width = Math.max(MIN_PANEL_W, Math.min(maxW, o.w)) + 'px';
-      } catch (e) {}
-    }
-    function makeResizable(p, handle) {
-      let startX = 0, startW = 0;
-      function onMove(e) {
-        const maxW = naturalWidth || startW;
-        const w = Math.max(MIN_PANEL_W, Math.min(maxW, startW + (e.clientX - startX)));
-        p.style.width = w + 'px';
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        saveSize(p);
-      }
-      handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation(); // don't also start a panel-drag from the same mousedown
-        const r = p.getBoundingClientRect();
-        startX = e.clientX;
-        startW = r.width;
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
-      });
+      const o = Utils.readJSON(SCORE_SIZE_KEY);
+      if (!o || typeof o.w !== 'number') return;
+      const maxW = naturalWidth || o.w;
+      p.style.width = Math.max(MIN_PANEL_W, Math.min(maxW, o.w)) + 'px';
     }
 
     // ====================================================================

@@ -173,6 +173,15 @@ rule below.
   help/legend expanded state is not persisted, and resets open on every
   reload).
 
+Versioning convention: the `-vN` suffix only bumps when a key's *stored
+shape* changes incompatibly with what's already saved (e.g. `nova-score-
+size-v1` → `v2` when the size shape changed) — never just because the code
+that reads/writes it moved files or got refactored. A refactor that keeps
+the same shape keeps the same key, so existing installs' saved
+positions/sizes/preferences survive it untouched (see `v1.4.3`'s Utils
+extraction below, which touched every one of these keys' code path without
+renaming any of them).
+
 ## Ground rules
 
 Invariants the script is expected to keep, regardless of what else changes:
@@ -273,6 +282,43 @@ around it:
   arrow-key navigation later, in `v1.3.2`.)
 
 ## Version history
+
+### `v1.4.3` — Dedupe shared DOM/UI mechanics into Utils
+
+A tech-debt pass, not a feature release: no shortcut, panel layout, or
+behavior is meant to change for an annotator using the script, with one
+explicit exception called out below.
+
+**Panel drag-to-move and resize** — hand-rolled independently in Scoring
+Shortcuts' panel, Remark Composer's popover, and QC Compare's panel, with
+real drift between the three copies (only two of them clamped the dragged
+panel into the viewport) — are now `Utils.makeDraggable`/
+`Utils.makeResizable`. Each caller still owns its own storage key and decides
+what to persist via its own `onDrop` callback, so this is shared *mechanism*,
+not shared *state* — see the "Modules stay behaviorally isolated" ground
+rule. **Explicit behavior fix:** Remark Composer's popover now also clamps
+into the viewport while dragging, matching the other two panels — previously
+it was the only one of the three that could be dragged fully off-screen.
+
+**The cascader-popup helpers** (`popupsVisible`/`edgeGap`/
+`closeOpenCascaders`) — byte-for-byte identical between Scoring Shortcuts and
+QC Compare, both driving the same Ant Design cascader controls — moved to
+`Utils` too. Each module's own adjacency threshold (`ADJACENT_GAP_PX`, 100 in
+Scoring Shortcuts vs. 120 in QC Compare) and "which item on the path" logic
+stayed local, since those differ by design.
+
+**`data-module-name` → Trans-number parsing and reading a cascader's
+selected-label text** — written independently three times (`/^Trans(\d+)
+Score$/`, `/^Trans(\d+)$/`, and the `.ant-select-selection-item` text read) —
+are now `Utils.transNumFromModuleName(mod, suffix)` and `Utils.readSelected(mod)`.
+
+**JSON localStorage read/write** (`Utils.readJSON`/`Utils.writeJSON`) absorbs
+the repeated try/catch + `JSON.parse`/`stringify` boilerplate every panel's
+position/size persistence had; which key to use and what shape to store is
+still each module's own decision.
+
+No storage keys were renamed (see "Storage keys" above) and no new ones were
+added.
 
 ### `v1.4.0` — Module split into `@require`d files; submit check moved to Remark Composer; Remarks auto-grow removed
 

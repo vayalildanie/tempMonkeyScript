@@ -109,36 +109,30 @@
     const RMD_SIZE_KEY = 'trans-tool:nova-remark-size-v1';
 
     function savePos(p) {
-      try { const r = p.getBoundingClientRect(); localStorage.setItem(RMD_POS_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) })); } catch (e) {}
+      const r = p.getBoundingClientRect();
+      Utils.writeJSON(RMD_POS_KEY, { left: Math.round(r.left), top: Math.round(r.top) });
     }
     // Returns true if a saved position was found and applied.
     function applySavedPos(p) {
-      try {
-        const raw = localStorage.getItem(RMD_POS_KEY);
-        if (!raw) return false;
-        const o = JSON.parse(raw);
-        if (o && typeof o.left === 'number' && typeof o.top === 'number') {
-          p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
-          return true;
-        }
-      } catch (e) {}
+      const o = Utils.readJSON(RMD_POS_KEY);
+      if (o && typeof o.left === 'number' && typeof o.top === 'number') {
+        p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
+        return true;
+      }
       return false;
     }
     function saveSize(p) {
-      try { const r = p.getBoundingClientRect(); localStorage.setItem(RMD_SIZE_KEY, JSON.stringify({ w: Math.round(r.width), h: Math.round(r.height) })); } catch (e) {}
+      const r = p.getBoundingClientRect();
+      Utils.writeJSON(RMD_SIZE_KEY, { w: Math.round(r.width), h: Math.round(r.height) });
     }
     // Returns true if a saved size was found and applied.
     function applySavedSize(p) {
-      try {
-        const raw = localStorage.getItem(RMD_SIZE_KEY);
-        if (!raw) return false;
-        const o = JSON.parse(raw);
-        if (o && typeof o.w === 'number' && typeof o.h === 'number') {
-          p.style.width = Math.max(POPOVER_MIN_W, o.w) + 'px';
-          p.style.height = Math.max(POPOVER_MIN_H, o.h) + 'px';
-          return true;
-        }
-      } catch (e) {}
+      const o = Utils.readJSON(RMD_SIZE_KEY);
+      if (o && typeof o.w === 'number' && typeof o.h === 'number') {
+        p.style.width = Math.max(POPOVER_MIN_W, o.w) + 'px';
+        p.style.height = Math.max(POPOVER_MIN_H, o.h) + 'px';
+        return true;
+      }
       return false;
     }
 
@@ -265,27 +259,16 @@
       popover.style.left = left + 'px';
       popover.style.top = top + 'px';
     }
+    // Drag/resize mechanics are shared with Scoring Shortcuts and QC
+    // Compare — see utils.js. One behavior change from the unification:
+    // this popover now also clamps into the viewport while dragging
+    // (Utils.makeDraggable's default), matching the other two panels —
+    // previously it was the only one of the three that could be dragged
+    // fully off-screen.
     function makeDraggable(p) {
-      const handle = p.querySelector('#rmd-head');
-      if (!handle) return;
-      let ox = 0, oy = 0;
-      function onMove(e) {
-        p.style.left = (e.clientX - ox) + 'px';
-        p.style.top = (e.clientY - oy) + 'px';
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        savePos(p);
-      }
-      handle.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button')) return;
-        e.preventDefault();
-        pinned = true; // manual drag → stop following the mouse from now on
-        const r = p.getBoundingClientRect();
-        ox = e.clientX - r.left; oy = e.clientY - r.top;
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
+      Utils.makeDraggable(p, p.querySelector('#rmd-head'), {
+        onDragStart: () => { pinned = true; }, // manual drag → stop following the mouse from now on
+        onDrop: () => savePos(p),
       });
     }
 
@@ -293,28 +276,13 @@
     // reloads (see RMD_SIZE_KEY above); enter() falls back to
     // POPOVER_DEFAULT_W/H only when nothing's been saved yet.
     function makePopoverResizable(p, handle) {
-      let startX = 0, startY = 0, startW = 0, startH = 0;
-      function onMove(e) {
-        const r = p.getBoundingClientRect();
-        const maxW = window.innerWidth - r.left - 8;
-        const maxH = window.innerHeight - r.top - 8;
-        const w = Math.max(POPOVER_MIN_W, Math.min(maxW, startW + (e.clientX - startX)));
-        const h = Math.max(POPOVER_MIN_H, Math.min(maxH, startH + (e.clientY - startY)));
-        p.style.width = w + 'px';
-        p.style.height = h + 'px';
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        saveSize(p);
-      }
-      handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation(); // don't also trigger makeDraggable's drag
-        const r = p.getBoundingClientRect();
-        startX = e.clientX; startY = e.clientY; startW = r.width; startH = r.height;
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
+      Utils.makeResizable(p, handle, {
+        axes: 'xy',
+        minW: POPOVER_MIN_W,
+        minH: POPOVER_MIN_H,
+        getMaxW: () => window.innerWidth - p.getBoundingClientRect().left - 8,
+        getMaxH: () => window.innerHeight - p.getBoundingClientRect().top - 8,
+        onDrop: () => saveSize(p),
       });
     }
 
@@ -340,7 +308,7 @@
     function markTransTitles(on) {
       document.querySelectorAll('.title-text').forEach((el) => {
         const mod = el.closest('[data-module-name]');
-        const isTrans = mod && /^Trans\d+$/.test(mod.getAttribute('data-module-name') || '');
+        const isTrans = mod && Utils.transNumFromModuleName(mod) !== null;
         if (on && isTrans) el.classList.add('rmd-clickable-title');
         else el.classList.remove('rmd-clickable-title');
       });
@@ -354,9 +322,9 @@
       const titleEl = e.target.closest && e.target.closest('.title-text');
       if (!titleEl) return;
       const mod = titleEl.closest('[data-module-name]');
-      const m = mod && /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
-      if (!m) return;
-      appendToken(`Trans ${m[1]}`, 'quote');
+      const transNum = Utils.transNumFromModuleName(mod);
+      if (transNum === null) return;
+      appendToken(`Trans ${transNum}`, 'quote');
       openPopover(e.clientX, e.clientY);
     }
 
@@ -440,12 +408,12 @@
       let transNum = null;
       const mods = document.querySelectorAll('[data-module-name]');
       for (const mod of mods) {
-        const m = /^Trans(\d+)$/.exec(mod.getAttribute('data-module-name') || '');
-        if (!m || !range.intersectsNode(mod)) continue;
-        if (transNum) { transNum = null; break; } // touches a second translation → ambiguous, bail
-        transNum = m[1];
+        const n = Utils.transNumFromModuleName(mod);
+        if (n === null || !range.intersectsNode(mod)) continue;
+        if (transNum !== null) { transNum = null; break; } // touches a second translation → ambiguous, bail
+        transNum = n;
       }
-      if (!transNum) {
+      if (transNum === null) {
         setHint('Selection must stay inside a single translation.');
         return false;
       }

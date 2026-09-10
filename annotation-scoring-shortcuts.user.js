@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.2
+// @version      1.4.3
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,19 @@
 // ==/UserScript==
 
 /*
+ * v1.4.3 dedupes DOM/UI mechanics that had drifted into three separate
+ * copies since the v1.4.0 split: panel drag-to-move and corner/edge resize
+ * (Scoring Shortcuts' panel, Remark Composer's popover, QC Compare's
+ * panel), the cascader-popup helpers (popupsVisible/edgeGap/
+ * closeOpenCascaders, shared by Scoring Shortcuts and QC Compare), and the
+ * `data-module-name` -> Trans-number parsing repeated in all three modules.
+ * All moved into src/utils.js as shared *mechanism* — never shared *state*;
+ * each panel still owns its own localStorage key and decides what shape to
+ * persist via its own onDrop callback. No functional change intended,
+ * except one explicit fix: Remark Composer's popover now also clamps into
+ * the viewport while dragging (previously the only one of the three panels
+ * that could be dragged fully off-screen). See utils.js's header comment.
+ *
  * v1.4.0 split this file's three modules — Scoring Shortcuts, Remark
  * Composer, QC Compare — plus their shared helpers (Utils, TransCursor) out
  * into the `src/*.js` files @require'd above, so this file is now just the
@@ -63,7 +76,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.2';
+  TL.SCRIPT_VERSION = 'v1.4.3';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

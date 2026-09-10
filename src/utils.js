@@ -3,7 +3,13 @@
 //
 // Shared DOM helpers used by more than one module (Scoring Shortcuts, Remark
 // Composer, QC Compare). Nothing here is tied to any one module's lifecycle —
-// these are stateless functions, safe to hand around as a plain object.
+// these are stateless functions, safe to hand around as a plain object. As
+// of v1.4.3 this also includes shared UI *mechanism* — draggable/resizable
+// panels, cascader-popup lookups, JSON localStorage read/write — that had
+// drifted into near-duplicate copies across modules; each caller still owns
+// its own storage key and behavior, only the DOM plumbing is shared. See
+// README.md's "modules stay behaviorally isolated" ground rule for why that
+// distinction matters.
 //
 // Loaded via @require, ahead of every module file — see
 // annotation-scoring-shortcuts.user.js's @require list and boot order.
@@ -77,6 +83,178 @@
 
     escapeHtml(s) {
       return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    },
+
+    // Which translation number a given module belongs to, read off its own
+    // `data-module-name` (e.g. "Trans3 Score" -> 3 with suffix=" Score", or
+    // plain "Trans3" -> 3 with suffix=""). Was written independently in
+    // Scoring Shortcuts, Remark Composer, and QC Compare — same regex,
+    // three copies.
+    transNumFromModuleName(mod, suffix = '') {
+      if (!mod) return null;
+      const m = new RegExp(`^Trans(\\d+)${suffix}$`).exec(mod.getAttribute('data-module-name') || '');
+      return m ? parseInt(m[1], 10) : null;
+    },
+
+    // The text currently selected/shown in a cascader (score/label) control.
+    readSelected(mod) {
+      const item = mod && mod.querySelector('.ant-select-selection-item');
+      return item ? item.textContent.trim() : '';
+    },
+
+    // ---- Shared cascader-popup helpers (Scoring Shortcuts + QC Compare) ----
+    // Both modules drive the platform's Ant Design cascader controls and hit
+    // the same "which popup actually belongs to the control I just clicked"
+    // problem — each module's own adjacency check (findItemNearSelector /
+    // pickNextOnPath) uses edgeGap to answer it; only that mechanism moved
+    // here; the per-module "which item on the path" logic stayed local since
+    // it differs (display text match vs. data-path-key walk).
+
+    // Every visible (not display:none) Ant Design dropdown currently open
+    // anywhere on the page.
+    popupsVisible() {
+      return Array.from(document.querySelectorAll('.ant-select-dropdown'))
+        .filter((p) => getComputedStyle(p).display !== 'none');
+    },
+
+    // Distance between a popup's near edge and its trigger's near edge. A
+    // dropdown always renders flush against its own trigger (just a few
+    // pixels of gap), so this distance reliably tells "this control's own
+    // dropdown" apart from a different translation's dropdown that happens
+    // to be open at the same time.
+    edgeGap(popup, selectorRect) {
+      const pr = popup.getBoundingClientRect();
+      if ((popup.className || '').indexOf('placement-top') >= 0) return Math.abs(pr.bottom - selectorRect.top);
+      return Math.abs(pr.top - selectorRect.bottom);
+    },
+
+    // Close every cascader dropdown that's currently open (detected via
+    // aria-expanded="true"), by clicking its own trigger to collapse it —
+    // so a stale/leftover open dropdown can never reappear alongside, or
+    // get confused with, the one about to be driven.
+    async closeOpenCascaders() {
+      const opens = Array.from(document.querySelectorAll('input[aria-expanded="true"]'));
+      for (const inp of opens) {
+        const sel = inp.closest('.ant-select');
+        if (sel) Utils.clickEl(sel.querySelector('.ant-select-selector') || sel);
+      }
+      if (opens.length) {
+        await Utils.waitFor(() => document.querySelectorAll('input[aria-expanded="true"]').length === 0, 700).catch(() => {});
+      }
+    },
+
+    // ---- JSON-safe localStorage read/write ----
+    // Only the try/catch + parse/stringify mechanics; which key to use and
+    // what shape to store stays each caller's own decision (position/size
+    // objects, flags, config blobs — whatever that module owns).
+    readJSON(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    },
+    writeJSON(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+    },
+
+    // Pull a fixed-position element back inside the viewport: past the
+    // right/bottom edge gets pulled back, negative coords clamp to 0. Used
+    // after restoring a saved position (the screen may have gotten smaller
+    // since) and after un-collapsing a panel.
+    clampIntoView(el, pad = 4) {
+      const r = el.getBoundingClientRect();
+      const left = Math.max(pad, Math.min(window.innerWidth - r.width - pad, r.left));
+      const top = Math.max(pad, Math.min(window.innerHeight - r.height - pad, r.top));
+      el.style.left = left + 'px'; el.style.top = top + 'px';
+      el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+    },
+
+    // ---- Draggable / resizable panels (v1.4.3) ----
+    // Previously hand-rolled independently in Scoring Shortcuts, Remark
+    // Composer, and QC Compare — the same mousedown/mousemove/mouseup
+    // wiring three times, with real drift between the copies (only two of
+    // the three clamped the dragged panel into the viewport). This is the
+    // mechanism only — which storage key to use and what to persist stays
+    // each caller's own decision via its own onDrop callback, same as the
+    // rest of this file: shared *mechanism*, never shared *state*.
+
+    // Make `el` draggable via mousedown-drag on `handle`, switching it to
+    // fixed left/top positioning (cancelling any right/bottom/transform
+    // positioning already on it).
+    //   clamp        — keep `el` fully inside the viewport while dragging (default true)
+    //   ignore(e)    — return true to ignore this mousedown (default: clicks on a <button>)
+    //   onDragStart()— called once, when a drag begins
+    //   onDrop()     — called once, when the mouse is released (e.g. to persist the new position)
+    makeDraggable(el, handle, opts = {}) {
+      if (!handle) return;
+      const {
+        clamp = true,
+        ignore = (e) => e.target.closest && e.target.closest('button'),
+        onDragStart,
+        onDrop,
+      } = opts;
+      let ox = 0, oy = 0;
+      function onMove(e) {
+        let left = e.clientX - ox, top = e.clientY - oy;
+        if (clamp) {
+          const r = el.getBoundingClientRect(), pad = 4;
+          left = Math.max(pad, Math.min(window.innerWidth - r.width - pad, left));
+          top = Math.max(pad, Math.min(window.innerHeight - r.height - pad, top));
+        }
+        el.style.left = left + 'px'; el.style.top = top + 'px';
+        el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        if (onDrop) onDrop();
+      }
+      handle.addEventListener('mousedown', (e) => {
+        if (ignore(e)) return;
+        e.preventDefault();
+        if (onDragStart) onDragStart();
+        const r = el.getBoundingClientRect();
+        ox = e.clientX - r.left; oy = e.clientY - r.top;
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      });
+    },
+
+    // Make `el` resizable via mousedown-drag on `handle` (typically a
+    // corner or edge grip). `axes: 'x'` is width-only (Scoring Shortcuts'
+    // panel, whose height always auto-fits its content); `'xy'` is
+    // width+height (Remark Composer's popover). Bounds are read once per
+    // drag via `getMaxW`/`getMaxH` — the element's left/top don't move
+    // during a resize, so a value computed at drag-start stays correct for
+    // the whole drag.
+    //   onDrop() — called once, when the mouse is released (e.g. to persist the new size)
+    makeResizable(el, handle, opts = {}) {
+      if (!handle) return;
+      const { axes = 'x', minW = 0, minH = 0, getMaxW, getMaxH, onDrop } = opts;
+      let startX = 0, startY = 0, startW = 0, startH = 0, maxW = Infinity, maxH = Infinity;
+      function onMove(e) {
+        const w = Math.max(minW, Math.min(maxW, startW + (e.clientX - startX)));
+        el.style.width = w + 'px';
+        if (axes === 'xy') {
+          const h = Math.max(minH, Math.min(maxH, startH + (e.clientY - startY)));
+          el.style.height = h + 'px';
+        }
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        if (onDrop) onDrop();
+      }
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation(); // don't also start a drag from the same mousedown
+        const r = el.getBoundingClientRect();
+        startX = e.clientX; startY = e.clientY; startW = r.width; startH = r.height;
+        maxW = getMaxW ? (getMaxW() || Infinity) : Infinity;
+        maxH = getMaxH ? (getMaxH() || Infinity) : Infinity;
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      });
     },
 
     // Is the user typing? Letter/number shortcuts must never fire while a
