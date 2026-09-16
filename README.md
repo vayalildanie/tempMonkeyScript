@@ -283,6 +283,26 @@ around it:
 
 ## Version history
 
+### `v1.4.4` — Strip MT segment tags from copied translation text
+
+The platform's per-translation copy icons were putting raw machine-
+translation segment tags (`<content1>`, `</content1>`, and similar) onto the
+clipboard along with the actual text — always wrapping the very start and/or
+end of the string, never appearing mid-text. Those icons are unlabeled
+`<img>`s with a framework-generated scoped-CSS attribute and no stable
+selector, so rather than hooking each one, `Utils.installClipboardSanitizer`
+patches `navigator.clipboard.writeText` itself, once, at boot — every copy
+made through it (on the score page and the quality page both) is run through
+new `Utils.stripAnnotationTags` first, which peels off any number of
+tag-shaped wrappers from both ends and leaves everything else, including a
+literal `<` a translator typed as content, untouched. It's a no-op for text
+that was never wrapped, so this is safe to apply page-wide rather than
+gating it to a specific button.
+
+`Utils.stripAnnotationTags` is exported standalone, not folded into the
+clipboard patch, so the same tag-stripping rule can be reused by the planned
+quote feature later without copy-pasting the regex.
+
 ### `v1.4.3` — Dedupe shared DOM/UI mechanics into Utils
 
 A tech-debt pass, not a feature release: no shortcut, panel layout, or

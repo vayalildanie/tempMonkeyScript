@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.3
+// @version      1.4.4
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,18 @@
 // ==/UserScript==
 
 /*
+ * v1.4.4 fixes the platform's per-translation copy icons carrying raw
+ * machine-translation segment tags (`<content1>`, `</content1>`, etc.) onto
+ * the clipboard. Rather than hooking the icons themselves — unlabeled
+ * `<img>`s with no stable selector — this patches
+ * `navigator.clipboard.writeText` once at boot so any copy made through it
+ * is run through `Utils.stripAnnotationTags` first, which strips tag-shaped
+ * wrapping off the very start/end of the copied string and leaves the rest
+ * alone. Page-wide (score page and quality page both), since it's a no-op
+ * for text that has no such wrapping. See `Utils.stripAnnotationTags`'s own
+ * comment in src/utils.js — the same helper is meant to be reused by the
+ * quote feature later.
+ *
  * v1.4.3 dedupes DOM/UI mechanics that had drifted into three separate
  * copies since the v1.4.0 split: panel drag-to-move and corner/edge resize
  * (Scoring Shortcuts' panel, Remark Composer's popover, QC Compare's
@@ -76,13 +88,14 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.3';
+  TL.SCRIPT_VERSION = 'v1.4.4';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);
   const qcCompare = TL.QCCompare(TL.Utils);
 
   function bootAll() {
+    TL.Utils.installClipboardSanitizer();
     scoringShortcuts.start();
     remarkComposer.start();
     qcCompare.start();

@@ -377,6 +377,45 @@
       target.dispatchEvent(new KeyboardEvent('keydown', opts));
       target.dispatchEvent(new KeyboardEvent('keyup', opts));
     },
+
+    // ---- Copy-tag stripping (v1.4.4) ----
+    // The platform's own translation text carries machine-translation
+    // segment tags (`<content1>`, `</content1>`, etc.) that are never meant
+    // to be read by a human — they only ever show up wrapping the very start
+    // and/or end of a string, never in the middle. Strips any number of them
+    // off both ends, repeatedly (handles nested wrapping like
+    // "<a><b>text</b></a>"), and leaves everything else — including a
+    // literal "<" a translator typed as content — untouched. Exported as a
+    // standalone function (not folded into the clipboard patch below) so the
+    // quote feature can reuse the exact same rule later.
+    stripAnnotationTags(text) {
+      if (typeof text !== 'string') return text;
+      const leading = /^\s*<\/?[A-Za-z][\w-]*\s*\/?>\s*/;
+      const trailing = /\s*<\/?[A-Za-z][\w-]*\s*\/?>\s*$/;
+      let out = text, prev;
+      do { prev = out; out = out.replace(leading, ''); } while (out !== prev);
+      do { prev = out; out = out.replace(trailing, ''); } while (out !== prev);
+      return out;
+    },
+
+    // Patch `navigator.clipboard.writeText` in place so every copy made
+    // through it — including the platform's own per-translation copy icons,
+    // whatever their DOM shape — is run through `stripAnnotationTags` first.
+    // Deliberately not a click-listener on the copy icon itself: those icons
+    // are plain unlabeled `<img>`s with framework-generated scoped-CSS
+    // attributes and no stable selector, while every copy path on this
+    // platform ends up calling the same clipboard API — patching that one
+    // choke point is robust to the page's DOM changing under us. Idempotent
+    // (`__tlPatched` guard) so re-running boot (e.g. after a SPA
+    // navigation re-injects the script) never double-wraps it.
+    installClipboardSanitizer() {
+      const clipboard = navigator.clipboard;
+      if (!clipboard || !clipboard.writeText || clipboard.writeText.__tlPatched) return;
+      const original = clipboard.writeText.bind(clipboard);
+      const patched = (text) => original(Utils.stripAnnotationTags(text));
+      patched.__tlPatched = true;
+      clipboard.writeText = patched;
+    },
   };
 
   TL.Utils = Utils;
