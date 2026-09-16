@@ -283,6 +283,27 @@ around it:
 
 ## Version history
 
+### `v1.4.6` — Fix `Q` always refusing with "must stay inside a single translation"
+
+`tryQuoteSelection`'s containment check walked every `[data-module-name]`
+element the selection's `Range` intersected, and bailed as soon as it hit a
+*second* intersecting element that parsed to any Trans number — without
+checking whether that second element was actually a *different*
+translation. The platform can render more than one element sharing the
+same `[data-module-name="TransN"]` for a single translation; every other
+place in this codebase that needs "the" TransN module already defends
+against that by grabbing only the first match via `querySelector`
+(`Utils.transHasText`, `scoring-shortcuts.js`'s Trans1 fallback, and this
+same file's own Trans1 fallback a few lines below `tryQuoteSelection`).
+This loop is the one place that has to use `querySelectorAll` instead (to
+actually detect a cross-translation selection), and it never applied that
+same "duplicates are normal" defense — a selection intersecting two
+same-numbered duplicate nodes for one translation tripped the identical
+"ambiguous, bail" path as a real cross-translation selection, so `Q` could
+refuse a selection that never left a single translation. Fixed by
+comparing the parsed number itself: only a genuinely different Trans
+number now aborts the quote.
+
 ### `v1.4.5` — Quote flow (`Q`) reuses the copy-icon tag stripping
 
 The `Q` quote flow (`tryQuoteSelection` in Remark Composer) reads the raw

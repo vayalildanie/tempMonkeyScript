@@ -415,7 +415,20 @@
       for (const mod of mods) {
         const n = Utils.transNumFromModuleName(mod);
         if (n === null || !range.intersectsNode(mod)) continue;
-        if (transNum !== null) { transNum = null; break; } // touches a second translation → ambiguous, bail
+        // The platform can render more than one element sharing the same
+        // `[data-module-name="TransN"]` for a single translation — every
+        // other reader of this attribute in the codebase already accounts
+        // for that by grabbing only the first match via `querySelector`
+        // (see Utils.transHasText, scoring-shortcuts.js, and the fallback
+        // a few lines below in this same file). This loop uses
+        // `querySelectorAll` instead (it has to, to detect a genuinely
+        // cross-translation selection), so it must compare the NUMBER, not
+        // just whether a second match happened — otherwise a selection
+        // that intersects two same-numbered duplicate nodes for one
+        // translation was wrongly read as touching two different
+        // translations and always bailed with "Selection must stay inside
+        // a single translation," even for a selection that never left one.
+        if (transNum !== null && n !== transNum) { transNum = null; break; } // touches a second, different translation → ambiguous, bail
         transNum = n;
       }
       if (transNum === null) {

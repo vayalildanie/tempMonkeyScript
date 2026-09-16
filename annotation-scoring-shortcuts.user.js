@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.5
+// @version      1.4.6
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,22 @@
 // ==/UserScript==
 
 /*
+ * v1.4.6 fixes `Q` always refusing with "Selection must stay inside a
+ * single translation," even for a selection that plainly never left one.
+ * `tryQuoteSelection`'s containment check walks every `[data-module-name]`
+ * element the selection's Range intersects and bails the instant it sees a
+ * SECOND intersecting element that parses to a Trans number at all — it
+ * never checked whether that second element was actually a *different*
+ * translation number. The platform can render more than one element
+ * sharing the same `[data-module-name="TransN"]` for one translation
+ * (every other reader of this attribute already defends against that by
+ * taking only the first match via `querySelector` — see
+ * Utils.transHasText and this file's own Trans1 fallback); a selection
+ * touching two same-numbered duplicates tripped the same "ambiguous, bail"
+ * path as a real cross-translation selection. Now only a genuinely
+ * different number aborts it. See src/remark-composer.js's
+ * `tryQuoteSelection` for the detail.
+ *
  * v1.4.5 reuses v1.4.4's tag-stripping fix in Remark Composer's `Q` quote
  * flow (`tryQuoteSelection` in src/remark-composer.js): a text selection
  * that starts or ends at a translation's very edge could catch the
@@ -99,7 +115,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.5';
+  TL.SCRIPT_VERSION = 'v1.4.6';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);
