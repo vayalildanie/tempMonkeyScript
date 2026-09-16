@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.4
+// @version      1.4.5
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,17 @@
 // ==/UserScript==
 
 /*
+ * v1.4.5 reuses v1.4.4's tag-stripping fix in Remark Composer's `Q` quote
+ * flow (`tryQuoteSelection` in src/remark-composer.js): a text selection
+ * that starts or ends at a translation's very edge could catch the
+ * wrapping MT segment tag along with the real text, the same failure mode
+ * the copy icons had. The raw `window.getSelection()` string is now run
+ * through the same `Utils.stripAnnotationTags` before anything else — no
+ * new stripping logic, just the one already proven against the copy-icon
+ * fix. The three quote-logic defects documented in v1.4.1 (unescaped `"`
+ * in the token, no double-quote guard, raw newlines in multi-line quotes)
+ * are unrelated and still not fixed here.
+ *
  * v1.4.4 fixes the platform's per-translation copy icons carrying raw
  * machine-translation segment tags (`<content1>`, `</content1>`, etc.) onto
  * the clipboard. Rather than hooking the icons themselves — unlabeled
@@ -88,7 +99,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.4';
+  TL.SCRIPT_VERSION = 'v1.4.5';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

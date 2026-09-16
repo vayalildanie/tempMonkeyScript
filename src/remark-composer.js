@@ -394,7 +394,12 @@
     //     multi-paragraph quote reads as a messy multi-line remark.
     function tryQuoteSelection() {
       const selObj = window.getSelection();
-      const text = selObj ? selObj.toString().trim() : '';
+      // Same tag-stripping rule as the copy-icon fix (v1.4.4,
+      // Utils.stripAnnotationTags): a selection that starts or ends at a
+      // translation's very edge can catch the wrapping MT segment tag
+      // (`<content1>`, `</content1>`, etc.) along with the real text, so run
+      // the raw selection through the same helper before anything else.
+      const text = Utils.stripAnnotationTags(selObj ? selObj.toString() : '').trim();
       if (!text) {
         // Nothing selected — most likely right after a quote just cleared
         // the selection. Put the cursor in the composer box so typing

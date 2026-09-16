@@ -283,6 +283,19 @@ around it:
 
 ## Version history
 
+### `v1.4.5` — Quote flow (`Q`) reuses the copy-icon tag stripping
+
+The `Q` quote flow (`tryQuoteSelection` in Remark Composer) reads the raw
+browser selection via `window.getSelection()`, and a selection that starts
+or ends right at a translation's edge could carry the wrapping MT segment
+tag along with the real text — the same failure mode `v1.4.4` fixed for the
+copy icons. Rather than writing a second tag-stripping rule, the raw
+selection string is now run through the exact same `Utils.stripAnnotationTags`
+before anything else in `tryQuoteSelection`. The three quote-logic defects
+already documented in `v1.4.1` (unescaped `"` breaking the token, no
+double-quote guard, raw newlines surviving into multi-line quotes) are
+unrelated and remain unfixed.
+
 ### `v1.4.4` — Strip MT segment tags from copied translation text
 
 The platform's per-translation copy icons were putting raw machine-
