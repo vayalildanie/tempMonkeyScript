@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.6
+// @version      1.4.7
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,16 @@
 // ==/UserScript==
 
 /*
+ * v1.4.7 widens Remark Composer's live "Trans N" highlight
+ * (`highlightTransRefs` in src/remark-composer.js) to recognize a
+ * comma/hyphen list after "Trans", not just a single number — "Trans 1, 2",
+ * "Trans 0, 1", "Trans 1-3", and "Trans 1-3, 5" now highlight the same as a
+ * lone "Trans 1" always did. Purely a display-overlay regex change, scoped
+ * to Remark Composer only (no other module touched): it recognizes the
+ * shape of a multi-translation reference so a hand-typed one reads visually
+ * the same as a machine-inserted single-translation quote — it does not
+ * parse or validate the numbers against which translations actually exist.
+ *
  * v1.4.6 fixes `Q` always refusing with "Selection must stay inside a
  * single translation," even for a selection that plainly never left one.
  * `tryQuoteSelection`'s containment check walks every `[data-module-name]`
@@ -115,7 +125,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.6';
+  TL.SCRIPT_VERSION = 'v1.4.7';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

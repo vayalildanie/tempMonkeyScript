@@ -283,6 +283,19 @@ around it:
 
 ## Version history
 
+### `v1.4.7` — Highlight overlay recognizes multi-translation "Trans N" references
+
+`highlightTransRefs` (the regex behind Remark Composer's live highlight
+backdrop) only ever matched a single number after "Trans" — `Trans 1` — so
+a hand-typed multi-translation reference like `Trans 1, 2`, `Trans 0, 1`,
+`Trans 1-3`, or `Trans 1-3, 5` never lit up. Widened to match a
+comma/hyphen-separated list after "Trans", matched and highlighted as a
+whole. This is display-only pattern matching — it recognizes the *shape* of
+a reference, not which translations actually exist, so it never parses or
+validates the numbers; a typo or a nonexistent Trans number highlights the
+same as a real one. Scoped entirely to `src/remark-composer.js` — no other
+module changed.
+
 ### `v1.4.6` — Fix `Q` always refusing with "must stay inside a single translation"
 
 `tryQuoteSelection`'s containment check walked every `[data-module-name]`

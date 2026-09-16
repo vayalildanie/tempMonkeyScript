@@ -214,8 +214,19 @@
     // mention highlighted. Every layout-affecting style property is copied
     // from the textarea onto the backdrop so the highlight stays
     // pixel-aligned as you type, resize, or scroll.
+    //
+    // Matches a comma/hyphen list after "Trans", not just a lone number —
+    // "Trans 1", "Trans 1, 2", "Trans 0, 1", "Trans 1-3", and "Trans 1-3, 5"
+    // all highlight in full. This is display-only pattern matching, not a
+    // check against which translations actually exist: it never parses the
+    // numbers or validates them, it just recognizes the shape so a
+    // hand-typed "this quote spans Trans 2, 3" reads the same as a
+    // machine-inserted single-translation quote.
     function highlightTransRefs(text) {
-      return Utils.escapeHtml(text).replace(/\bTrans\s+(\d+)\b/g, '<span class="rmd-tref">Trans $1</span>');
+      return Utils.escapeHtml(text).replace(
+        /\bTrans\s+\d+(?:\s*[-,]\s*\d+)*\b/g,
+        (m) => `<span class="rmd-tref">${m}</span>`
+      );
     }
     function setPreview(text) {
       if (bgEl) bgEl.innerHTML = highlightTransRefs(text) + '\n';
