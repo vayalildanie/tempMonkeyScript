@@ -838,11 +838,11 @@
         e.preventDefault();
         e.stopImmediatePropagation();
         const list = incomplete.map((n) => `Trans${n}`).join(', ');
-        Utils.showToast(
+        /*Utils.showToast(
           `⛔ Not submitted — <b>${list}</b> ${incomplete.length === 1 ? 'is' : 'are'} missing a complete label.`
           + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
           + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
-        );
+        );*/
         return;
       }
       // Everything labelled — a clean pass, worth confirming instead of staying silent.
