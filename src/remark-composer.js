@@ -9,7 +9,7 @@
   // quotes instead of typing full sentences by hand — quoting is
   // select-then-Q (plain browser selection, no drag-takeover/word-snapping).
   // Each translation has its own Remarks field; this composer writes into
-  // one highlighted target at a time (arrow keys move it).
+    // one highlighted target at a time (arrows, Remarks clicks, or direct edits).
   //
   // As of v1.4.0 this module also owns the submit-check system, moved here
   // wholesale from Scoring Shortcuts: `O` opens/closes this window, `Z`
@@ -101,6 +101,7 @@
     let loadedTarget = null;       // Trans number whose Remarks text is currently loaded into #rmd-edit
     let jumpPending = false;       // the one-shot "first ArrowUp goes to Trans1" is still unspent
     let lastPreviewText = null;    // last text painted into the backdrop (skip identical repaints)
+    let writingTarget = false;     // distinguish our synchronous input feedback from direct NOVA edits
 
     // Popover size/position — persisted across reloads as of v1.4.0 ("an
     // adjustable window like the shortcuts Legend"), matching Scoring
@@ -176,7 +177,10 @@
     }
     function writeTarget(text) {
       const ta = remarkTextarea(cursor.get());
-      if (ta) Utils.setNativeValue(ta, text);
+      if (!ta) return;
+      writingTarget = true;
+      try { Utils.setNativeValue(ta, text); }
+      finally { writingTarget = false; }
     }
 
     // ---------- Targets ----------
@@ -418,6 +422,22 @@
       if (msg) hintTimer = setTimeout(() => setHint(''), 5000);
     }
 
+    // Resolve live events by translation number, not a cached module node.
+    function eventRemarkTarget(e) {
+      const el = e.target;
+      const mod = el && el.closest && el.closest('[data-module-name]');
+      const n = mod ? Utils.transNumFromModuleName(mod, ' Remarks') : null;
+      return n !== null && targetNumbers().includes(n) ? n : null;
+    }
+
+    function onNovaRemarksClick(e) {
+      if (!active || settingsOpen || e.button !== 0) return;
+      const n = eventRemarkTarget(e);
+      if (n === null) return;
+      jumpPending = false;
+      cursor.set(n); // no scroll or focus takeover; preserve the native click
+    }
+
     // NOVA's Remarks textarea can be replaced by React re-renders, so this is
     // delegated on document (never replaced) rather than holding a direct
     // listener on the element itself.
@@ -426,20 +446,19 @@
     // into previewEl too, instead of previewEl going stale and silently
     // overwriting it on the next composer-side action.
     function onNovaRemarksInput(e) {
-      if (!active) return; // composer closed → previewEl hidden; enter() reloads fresh on next open
+      if (!active || settingsOpen || writingTarget) return; // ignore our own synchronous feedback
       const ta = e.target;
       if (!ta || ta.tagName !== 'TEXTAREA') return;
-      // Only the ACTIVE target's field is mirrored; edits to other
-      // translations' Remarks must not leak into the proxy.
-      const mod = ta.closest && ta.closest('[data-module-name]');
-      const n = mod ? Utils.transNumFromModuleName(mod, ' Remarks') : null;
-      if (n === null || n !== cursor.get()) return;
+      const n = eventRemarkTarget(e);
+      if (n === null) return;
       if (!previewEl) return;
       // Also breaks the composer→NOVA feedback loop: Utils.setNativeValue's
       // synthetic input event reaches here too, but previewEl.value is
       // always set before that call, so the values already match and this
       // is a no-op for that direction.
-      if (previewEl.value === ta.value) return;
+      jumpPending = false;
+      if (n === cursor.get() && previewEl.value === ta.value) return;
+      if (n !== cursor.get()) cursor.set(n);
       previewEl.value = ta.value;
       setPreview(ta.value);
     }
@@ -1068,6 +1087,7 @@
       lastRowSig = getRowSig();
       document.addEventListener('keydown', onKeyDown, true);
       document.addEventListener('input', onNovaRemarksInput, true);
+      document.addEventListener('click', onNovaRemarksClick, true);
       document.addEventListener('mousemove', (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
       const mo = new MutationObserver(onMutate);
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });

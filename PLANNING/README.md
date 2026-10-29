@@ -9,6 +9,7 @@ Nothing here is loaded by the userscript.
 |---|---|
 | `specs/2026-10-29-v1.5.2-remark-click-selection-design.md` | The approved design: delegated click selection, direct-edit synchronization, and existing arrow eligibility |
 | `plans/2026-10-29-v1.5.2-remark-click-selection.md` | The implementation plan, including its regression and release tasks |
+| `reports/v1.5.2/ledger.md` | Implementation evidence, independent review, rulings, deferred test improvements, and live smoke checklist (96 tests passing) |
 
 ## v1.5.0 — annotation UI adaptation
 

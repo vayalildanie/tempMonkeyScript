@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.5.1
+// @version      1.5.2
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,10 @@
 // ==/UserScript==
 
 /*
+ * v1.5.2 adds click-to-select for eligible Remarks while Remark Options is
+ * open. Editing a NOVA Remarks textarea selects it and mirrors its text into
+ * the popover without stealing focus. Existing arrow eligibility is unchanged.
+ *
  * v1.5.1 replaces the Remark help paragraph in the Scoring Shortcuts panel
  * with keycap legend entries (Q Quote/Edit Remark, Z Cycle Checker, Enter
  * Run Checker, Esc Back) and pins the Submit Check badge to the right edge of
@@ -154,7 +158,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.5.1';
+  TL.SCRIPT_VERSION = 'v1.5.2';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

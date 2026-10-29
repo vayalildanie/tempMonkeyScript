@@ -231,7 +231,7 @@ test.describe('arrow movement', () => {
     expect(await page.evaluate(() => document.querySelector('[data-module-name="Trans5 Remarks"] textarea').selectionStart)).toBe(2);
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 4);
+    await expectTarget(page, 5); // direct input selected Trans5; caret keys leave it there
   });
 
   test('arrows do nothing while the composer is closed', async ({ page }) => {
@@ -327,14 +327,15 @@ test.describe('writes', () => {
     await expectRemarks(page, { 1: '', 2: 'after swap', 4: '' });
   });
 
-  test('reverse sync mirrors a page-side edit of the active target only', async ({ page }) => {
+  test('reverse sync selects an eligible page-side edit', async ({ page }) => {
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points' });
     await openComposer(page);
     await expectTarget(page, 2);
     await pageEdit(page, 2, 'typed on page');
     await expect(edit(page)).toHaveValue('typed on page');
     await pageEdit(page, 4, 'other');
-    await expect(edit(page)).toHaveValue('typed on page');
+    await expectTarget(page, 4);
+    await expect(edit(page)).toHaveValue('other');
     await expectRemarks(page, { 2: 'typed on page', 4: 'other' });
   });
 
@@ -357,6 +358,162 @@ test.describe('writes', () => {
     await page.keyboard.type('Trans 2 is odd');
     await expect(page.locator('#rmd-edit-bg')).toContainText('Trans 2 is odd');
     expect(await page.locator('.rmd-tref').count()).toBe(0);
+  });
+});
+
+test.describe('mouse selection and direct editing', () => {
+  // Keep the floating composer away from the right-column native click targets.
+  test.beforeEach(async ({ page }) => {
+    await page.addStyleTag({ content: '#rmd-popover { left: 16px !important; top: 0 !important; }' });
+  });
+  const field = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"] textarea`).first();
+  const area = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"]`).first();
+
+  test('module clicks load text without writing; subsequent chips and Clear affect only that target', async ({ page }) => {
+    await pageEdit(page, 1, 'one');
+    await pageEdit(page, 4, 'four');
+    await openComposer(page);
+    await area(page, 4).dispatchEvent('click');
+    await expectTarget(page, 4);
+    await expect(edit(page)).toHaveValue('four');
+    await page.locator('.rmd-chip[data-chip="Natural"]').click();
+    await expectRemarks(page, { 1: 'one', 4: 'four, Natural' });
+    await page.locator('#rmd-clear-btn').click();
+    await expectRemarks(page, { 1: 'one', 4: '' });
+    await area(page, 1).dispatchEvent('click');
+    await expect(edit(page)).toHaveValue('one');
+  });
+
+  test('real textarea click preserves focus, caret, native arrows and live typing', async ({ page }) => {
+    await pageEdit(page, 4, 'abcd');
+    await openComposer(page);
+    await field(page, 4).click();
+    await expectTarget(page, 4);
+    await field(page, 4).evaluate((ta) => ta.setSelectionRange(2, 2));
+    await page.keyboard.type('X');
+    await expect(edit(page)).toHaveValue('abXcd');
+    await expect(field(page, 4)).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    expect(await field(page, 4).evaluate((ta) => ta.selectionStart)).toBe(2);
+    await expectTarget(page, 4);
+  });
+
+  test('direct paste-like input switches target, mirrors multiline text and consumes first Up', async ({ page }) => {
+    await openComposer(page);
+    await pageEdit(page, 5, 'five\n"quoted" <text>');
+    await expectTarget(page, 5);
+    await expect(edit(page)).toHaveValue('five\n"quoted" <text>');
+    await page.keyboard.press('ArrowUp');
+    await expectTarget(page, 4);
+  });
+
+  test('ineligible empty translation clicks and edits do not switch or leak text', async ({ page }) => {
+    await openComposer(page);
+    await area(page, 3).dispatchEvent('click');
+    await pageEdit(page, 3, 'ineligible');
+    await expectTarget(page, 1);
+    await expect(edit(page)).toHaveValue('');
+    await expectRemarks(page, { 3: 'ineligible', 1: '' });
+  });
+
+  test('same-target clicks preserve textarea selection and consume the special Up jump', async ({ page }) => {
+    await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' });
+    await pageEdit(page, 4, 'four');
+    await openComposer(page);
+    await field(page, 4).click();
+    await field(page, 4).evaluate((ta) => ta.setSelectionRange(1, 3));
+    await area(page, 4).dispatchEvent('click');
+    expect(await field(page, 4).evaluate((ta) => [ta.selectionStart, ta.selectionEnd])).toEqual([1, 3]);
+    await field(page, 4).evaluate((ta) => ta.blur());
+    await page.keyboard.press('ArrowUp');
+    await expectTarget(page, 2);
+  });
+
+  test('click from composer focus then Up proceeds from clicked target', async ({ page }) => {
+    await openComposer(page);
+    await edit(page).click();
+    await field(page, 5).click();
+    await field(page, 5).evaluate((ta) => ta.blur());
+    await page.keyboard.press('ArrowUp');
+    await expectTarget(page, 4);
+  });
+
+  test('closed clicks and inputs do not retain a mouse target on reopen', async ({ page }) => {
+    await field(page, 4).click();
+    await pageEdit(page, 4, 'closed');
+    expect(await activeTargets(page)).toEqual([]);
+    await field(page, 4).evaluate((ta) => ta.blur());
+    await openComposer(page);
+    await expectTarget(page, 1);
+    await expect(edit(page)).toHaveValue('');
+  });
+
+  test('replacement module remains clickable and synchronizes both ways', async ({ page }) => {
+    await openComposer(page);
+    await area(page, 4).evaluate((mod) => mod.replaceWith(mod.cloneNode(true)));
+    await field(page, 4).click();
+    await expectTarget(page, 4);
+    await edit(page).fill('proxy');
+    await expectRemarks(page, { 4: 'proxy', 1: '' });
+    await pageEdit(page, 4, 'native');
+    await expect(edit(page)).toHaveValue('native');
+  });
+
+  test('composer and source clicks do not retarget; column memory learns mouse selection', async ({ page }) => {
+    await openComposer(page);
+    await area(page, 5).dispatchEvent('click');
+    await page.locator('#rmd-head .rmd-title').click();
+    await page.locator('[data-module-name="Trans1"] .preview-content').first().dispatchEvent('click');
+    await expectTarget(page, 5);
+    await page.keyboard.press('ArrowLeft');
+    await expectTarget(page, 1);
+    await page.keyboard.press('ArrowRight');
+    await expectTarget(page, 5);
+  });
+
+  test('spaced module names select even when the new text equals the proxy', async ({ page }) => {
+    await pageEdit(page, 1, 'same');
+    await openComposer(page);
+    await pageEdit(page, 2, 'same');
+    await expectTarget(page, 2);
+    await edit(page).fill('two');
+    await expectRemarks(page, { 1: 'same', 2: 'two' });
+  });
+
+  test('all-empty source fallback still permits selecting Remarks', async ({ page }) => {
+    await page.locator('[data-module-name^="Trans"] .preview-content').evaluateAll((els) => els.forEach((el) => { el.textContent = ''; }));
+    await openComposer(page);
+    await area(page, 3).dispatchEvent('click');
+    await expectTarget(page, 3);
+  });
+
+  test('unchanged native input consumes first Up but composer feedback does not', async ({ page }) => {
+    await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' });
+    await openComposer(page);
+    await edit(page).fill('composer');
+    await edit(page).evaluate((ta) => ta.blur());
+    await page.keyboard.press('ArrowUp');
+    await expectTarget(page, 1); // composer feedback must not consume the jump
+    await page.keyboard.press('Escape');
+    await openComposer(page);
+    await expectTarget(page, 4);
+    await pageEdit(page, 4, 'composer'); // unchanged native input is still an edit interaction
+    await page.keyboard.press('ArrowUp');
+    await expectTarget(page, 2);
+  });
+
+  test('selection alone emits no input events; ignored score and right-click do not retarget', async ({ page }) => {
+    await openComposer(page);
+    await page.evaluate(() => {
+      window.nativeInputs = 0;
+      document.addEventListener('input', () => window.nativeInputs++);
+    });
+    await area(page, 4).dispatchEvent('click');
+    await expectTarget(page, 4);
+    expect(await page.evaluate(() => window.nativeInputs)).toBe(0);
+    await area(page, 5).dispatchEvent('click', { button: 2 });
+    await page.locator('[data-module-name="Trans1 Score"] .ant-select-selector').first().dispatchEvent('click');
+    await expectTarget(page, 4);
   });
 });
 

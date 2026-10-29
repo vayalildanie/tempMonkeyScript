@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.1`, on `main`.** It is covered by an automated
+> **Current version: `v1.5.2`, on `main`.** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -160,7 +160,7 @@ since the submit check is a page-level guard, not a composer-UI feature)
 | Key | Effect |
 |---|---|
 | `O` | Open/close the Remark Options window. On open, the Remarks box of the first translation *with text* that isn't scored 3 Points is selected and outlined (empty/unscored counts); Trans1 if every score begins with 3 Points |
-| `↑` / `↓` / `←` / `→` | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). If `↑` is your first arrow press after opening, it jumps to Trans1; after any arrow press movement is sequential |
+| `↑` / `↓` / `←` / `→` | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). The first `↑` jumps to Trans1 unless an arrow, Remarks click, or direct Remarks edit has already consumed that shortcut |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
 | `Enter` | Run the check now, safely — blocks on an incomplete label per the current check mode; in Submit Check mode, a clean pass also submits (synthesizes Space) |
 | `Q` | Quote the current selection into the highlighted Remarks box as `Trans N "…"`. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box. A selection spanning two translations is refused |
@@ -169,6 +169,14 @@ since the submit check is a page-level guard, not a composer-UI feature)
 Practical consequence of the focus rule: clicking a chip or pressing `Q`
 moves the cursor into the Remark Options edit box, where arrows move the caret
 as usual — click outside the box before using the arrows to change target.
+
+Alternatively, while Remark Options is open, click an eligible Remarks area
+to select it and immediately load its text into the popover. Clicking the
+textarea leaves focus there: type directly and the popover mirrors each
+input. Popover edits, chips, and Clear update only that selected field.
+Both selection methods skip empty translations while others have text;
+when all are empty, all discovered Remarks fields are available. Clicks and
+edits while the popover is closed do not change its next initial target.
 
 Under the edit box a "Likely need remarks" line lists translations scored
 `2 Points` (bare or fully labelled) or `Confusing`; `3 Points` and unscored
@@ -382,6 +390,26 @@ real annotation row:
   would be read as a row change and snap the Remark target back.
 
 ## Version history
+
+### `v1.5.2` — Click-to-select Remarks and live direct editing
+
+- While Remark Options is open, click anywhere in an eligible translation's
+  Remarks module to select it and immediately load its text in the popover.
+- Type, paste, delete, or undo directly in an eligible NOVA Remarks textarea:
+  it becomes the active target and its input updates the popover immediately.
+  Textarea focus, selection, and caret keys remain native. Popover edits,
+  chips, Clear, and quotes continue to write only to the selected target.
+- Click selection complements arrows and uses the same eligibility rules:
+  empty translations are skipped while populated translations exist. A click
+  or direct edit consumes the special first-Up jump. Closed-window clicks
+  do not change the initial target used on reopening.
+- The only refactoring is a private shared event-to-target resolver; no
+  changes to TransCursor, scoring, QC Compare, or Submit Check.
+- Automated fixture tests cover selection, two-way synchronization, target
+  isolation, focus/caret behavior, nested/spaced modules, replacements,
+  ignored clicks, and empty-source fallback. Live NOVA event propagation,
+  React-controlled persistence, and IME composition still require a live
+  smoke check; fixture tests are not evidence of those platform behaviors.
 
 ### `v1.5.1` — Legend keycaps, badge pinned right, capture pipeline
 

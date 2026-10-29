@@ -5,7 +5,7 @@ const { bootModules } = require('./helpers/boot');
 
 const root = path.resolve(__dirname, '..');
 const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
-const VERSION = '1.5.1';
+const VERSION = '1.5.2';
 
 async function boot(page) {
   await page.goto(fixtureUrl);
