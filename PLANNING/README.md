@@ -3,6 +3,12 @@
 Design specs, implementation plans, and execution reports for tempMonkeyScript.
 Nothing here is loaded by the userscript.
 
+## Proposed — Submit Check remark gate
+
+| Document | What it is |
+|---|---|
+| `specs/2026-10-29-submit-check-non3-remarks-design.md` | Proposed only: hold submission when a populated non-3 score has an empty remark. Not approved and not on `main`. |
+
 ## v1.5.2 — remark click selection
 
 | Document | What it is |
