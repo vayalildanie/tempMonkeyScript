@@ -1,1 +1,9 @@
 work-KB/
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Local page captures: raw task text from the live site, kept off GitHub.
+captures/*/

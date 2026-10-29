@@ -5,10 +5,11 @@
   // ============================================================================
   // trans-tool / Remark Composer
   //
-  // Lets an annotator build a structured remark by clicking translation
-  // titles and category chips instead of typing full sentences by hand —
-  // quoting is select-then-Q (plain browser selection, no drag-takeover/
-  // word-snapping).
+  // Lets an annotator build a structured remark from category chips and
+  // quotes instead of typing full sentences by hand — quoting is
+  // select-then-Q (plain browser selection, no drag-takeover/word-snapping).
+  // Each translation has its own Remarks field; this composer writes into
+  // one highlighted target at a time (arrow keys move it).
   //
   // As of v1.4.0 this module also owns the submit-check system, moved here
   // wholesale from Scoring Shortcuts: `O` opens/closes this window, `Z`
@@ -96,6 +97,10 @@
     let lastMouseX = window.innerWidth / 2, lastMouseY = 150; // where the popover appears when opened via O
     let lastRowSig = '';
     let settleTimer = null;
+    let hintTimer = null;
+    let loadedTarget = null;       // Trans number whose Remarks text is currently loaded into #rmd-edit
+    let jumpPending = false;       // the one-shot "first ArrowUp goes to Trans1" is still unspent
+    let lastPreviewText = null;    // last text painted into the backdrop (skip identical repaints)
 
     // Popover size/position — persisted across reloads as of v1.4.0 ("an
     // adjustable window like the shortcuts Legend"), matching Scoring
@@ -149,10 +154,116 @@
       try { localStorage.setItem(RMD_STORAGE_KEY, JSON.stringify(cfg)); } catch (e) {}
     }
 
-    // ---------- NOVA's real Remarks textarea (not ours) ----------
-    function remarkTextarea() {
-      const m = document.querySelector('[data-module-name="Remarks"]');
+    // ---------- NOVA's real per-translation Remarks / Score modules (not ours) ----------
+    // The platform nests duplicate `font[data-module-name]` wrappers for one
+    // module, and re-renders can replace the nodes, so everything is looked up
+    // live by Trans NUMBER and the first match wins (one target per number).
+    function modulesBySuffix(suffix) {
+      const map = new Map();
+      document.querySelectorAll('[data-module-name]').forEach((mod) => {
+        const n = Utils.transNumFromModuleName(mod, suffix);
+        if (n !== null && !map.has(n)) map.set(n, mod);
+      });
+      return map;
+    }
+    function remarkModule(n) { return modulesBySuffix(' Remarks').get(n) || null; }
+    function remarkTextarea(n) {
+      const m = n == null ? null : remarkModule(n);
       return m ? m.querySelector('textarea') : null;
+    }
+    function scoreText(n) {
+      return Utils.readSelected(modulesBySuffix(' Score').get(n));
+    }
+    function writeTarget(text) {
+      const ta = remarkTextarea(cursor.get());
+      if (ta) Utils.setNativeValue(ta, text);
+    }
+
+    // ---------- Targets ----------
+    // Arrow targets: Remarks of populated translations, in Trans-number order
+    // (all discovered Remarks only if nothing is populated).
+    function targetNumbers() {
+      const nums = Array.from(modulesBySuffix(' Remarks').keys()).sort((a, b) => a - b);
+      const populated = nums.filter((n) => Utils.transHasText(n));
+      return populated.length ? populated : nums;
+    }
+    const cursor = TL.TransCursor({
+      list: targetNumbers,
+      leftMax: 3,
+      onChange: (n, opts) => selectTarget(n, opts),
+      status: (msg) => setHint(msg),
+    });
+
+    // First populated translation whose displayed score does not begin with
+    // "3 Points" (unscored counts); Trans1 when there is none.
+    function initialTarget() {
+      const nums = targetNumbers();
+      const found = nums.find((n) => Utils.transHasText(n) && !/^3 Points/.test(scoreText(n)));
+      if (found !== undefined) return found;
+      return nums.indexOf(1) !== -1 ? 1 : (nums.length ? nums[0] : null);
+    }
+    function resolveInitialTarget() {
+      jumpPending = true;
+      loadedTarget = null; // force a reload of #rmd-edit from the new target
+      const n = initialTarget();
+      if (n === null) { applyTargetHighlight(); loadProxy(); return; }
+      cursor.set(n);
+    }
+
+    function applyTargetHighlight() {
+      const mod = active ? remarkModule(cursor.get()) : null;
+      document.querySelectorAll('.rmd-active-target').forEach((el) => { if (el !== mod) el.classList.remove('rmd-active-target'); });
+      if (mod) mod.classList.add('rmd-active-target');
+      return mod;
+    }
+
+    // Reload #rmd-edit from the active target (never writes anywhere).
+    function loadProxy() {
+      const n = cursor.get();
+      loadedTarget = n;
+      const ta = remarkTextarea(n);
+      const val = ta ? ta.value : '';
+      if (previewEl) previewEl.value = val;
+      setPreview(val);
+    }
+
+    function selectTarget(n, opts) {
+      if (!active) return;
+      const mod = applyTargetHighlight();
+      if (n !== loadedTarget) loadProxy();
+      if (mod && opts && opts.scroll && mod.scrollIntoView) mod.scrollIntoView({ block: 'center' });
+    }
+
+    function moveTarget(key) {
+      const wasPending = jumpPending;
+      jumpPending = false;
+      if (key === 'ArrowUp') {
+        if (wasPending) {
+          const nums = targetNumbers();
+          const first = nums.indexOf(1) !== -1 ? 1 : nums[0];
+          if (first !== undefined) { cursor.set(first, { scroll: true }); setHint(`Current: Trans${first}`); }
+        } else cursor.step(-1);
+      } else if (key === 'ArrowDown') cursor.step(1);
+      else cursor.toggleColumn();
+    }
+
+    // ---------- Likely-remark summary ----------
+    function likelyText() {
+      const parts = [];
+      Array.from(modulesBySuffix(' Score').keys()).sort((a, b) => a - b).forEach((n) => {
+        const t = scoreText(n);
+        if (/^2 Points/.test(t)) parts.push(`Trans${n} (2 Points)`);
+        else if (t === 'Confusing') parts.push(`Trans${n} (Confusing)`);
+      });
+      return parts.length ? `Likely need remarks: ${parts.join(', ')}` : 'No translations need remarks';
+    }
+    // Only touches the DOM when the text changed, so the page observer can
+    // never loop on this element's own writes.
+    function updateLikely() {
+      const el = popover && popover.querySelector('#rmd-likely');
+      if (!el) return;
+      const next = likelyText();
+      if (el.textContent !== next) el.textContent = next;
     }
 
     // ---------- Building the remark text ----------
@@ -179,8 +290,7 @@
       const cur = previewEl.value.replace(/\s+$/, '');
       const next = cur + separatorFor(cur, kind) + token;
       previewEl.value = next;
-      const ta = remarkTextarea();
-      if (ta) Utils.setNativeValue(ta, next);
+      writeTarget(next);
       setPreview(next);
       try { previewEl.setSelectionRange(next.length, next.length); } catch (e) {}
       focusEditEnd();
@@ -188,13 +298,12 @@
 
     function clearBox() {
       if (previewEl) previewEl.value = '';
-      const ta = remarkTextarea();
-      if (ta) Utils.setNativeValue(ta, '');
+      writeTarget('');
       setPreview('');
     }
 
     // Delay focusing the edit box by one frame: if a quote was just
-    // inserted right after a native text selection (Q) or a title click,
+    // inserted right after a native text selection (Q),
     // focusing synchronously gets fought by the browser (it tries to pull
     // focus back toward wherever the selection/click was). One rAF later,
     // it sticks (一帧延迟避免焦点被拖选/点击源头拉回去).
@@ -210,26 +319,15 @@
     // The edit box is two layers stacked exactly on top of each other: the
     // real, focusable textarea (#rmd-edit) rendered with transparent text —
     // only the caret shows, via caret-color — and a non-interactive backdrop
-    // (#rmd-edit-bg) underneath, showing the same text with every "Trans N"
-    // mention highlighted. Every layout-affecting style property is copied
+    // (#rmd-edit-bg) underneath, showing the same text. Every layout-affecting style property is copied
     // from the textarea onto the backdrop so the highlight stays
     // pixel-aligned as you type, resize, or scroll.
     //
-    // Matches a comma/hyphen list after "Trans", not just a lone number —
-    // "Trans 1", "Trans 1, 2", "Trans 0, 1", "Trans 1-3", and "Trans 1-3, 5"
-    // all highlight in full. This is display-only pattern matching, not a
-    // check against which translations actually exist: it never parses the
-    // numbers or validates them, it just recognizes the shape so a
-    // hand-typed "this quote spans Trans 2, 3" reads the same as a
-    // machine-inserted single-translation quote.
-    function highlightTransRefs(text) {
-      return Utils.escapeHtml(text).replace(
-        /\bTrans\s+\d+(?:\s*[-,]\s*\d+)*\b/g,
-        (m) => `<span class="rmd-tref">${m}</span>`
-      );
-    }
+    // Display text is just escaped — no highlighting of "Trans N" mentions.
     function setPreview(text) {
-      if (bgEl) bgEl.innerHTML = highlightTransRefs(text) + '\n';
+      if (!bgEl || text === lastPreviewText) return;
+      lastPreviewText = text;
+      bgEl.innerHTML = Utils.escapeHtml(text) + '\n';
     }
     // Refresh the backdrop from the textarea's current value — but never
     // while the user is actively focused and typing in it, or the redraw
@@ -312,41 +410,17 @@
       }).join('');
     }
 
-    // ---------- Referencing a translation ----------
-
-    // Add/remove the clickable-title hint style on every translation's
-    // title (never on Score/Remarks/etc titles).
-    function markTransTitles(on) {
-      document.querySelectorAll('.title-text').forEach((el) => {
-        const mod = el.closest('[data-module-name]');
-        const isTrans = mod && Utils.transNumFromModuleName(mod) !== null;
-        if (on && isTrans) el.classList.add('rmd-clickable-title');
-        else el.classList.remove('rmd-clickable-title');
-      });
-    }
-
-    // Click a translation's title → whole-paragraph reference, "Trans N".
-    // (Quoting a specific excerpt is Q, not a click — see tryQuoteSelection.)
-    function onDocMouseUp(e) {
-      if (!active || settingsOpen) return;
-      if (e.target.closest && e.target.closest('#rmd-popover')) return;
-      const titleEl = e.target.closest && e.target.closest('.title-text');
-      if (!titleEl) return;
-      const mod = titleEl.closest('[data-module-name]');
-      const transNum = Utils.transNumFromModuleName(mod);
-      if (transNum === null) return;
-      appendToken(`Trans ${transNum}`, 'quote');
-      openPopover(e.clientX, e.clientY);
-    }
-
+    // #rmd-hint is a transient message line (empty by default).
     function setHint(msg) {
       const hintEl = popover && popover.querySelector('#rmd-hint');
       if (hintEl) hintEl.textContent = msg;
+      clearTimeout(hintTimer);
+      if (msg) hintTimer = setTimeout(() => setHint(''), 5000);
     }
 
     // NOVA's Remarks textarea can be replaced by React re-renders, so this is
     // delegated on document (never replaced) rather than holding a direct
-    // listener on the element itself — same reasoning as onDocMouseUp above.
+    // listener on the element itself.
     // Handles the reverse sync direction: typing directly into NOVA's own
     // visible Remarks field (instead of the composer box) now flows back
     // into previewEl too, instead of previewEl going stale and silently
@@ -355,7 +429,11 @@
       if (!active) return; // composer closed → previewEl hidden; enter() reloads fresh on next open
       const ta = e.target;
       if (!ta || ta.tagName !== 'TEXTAREA') return;
-      if (!ta.closest || !ta.closest('[data-module-name="Remarks"]')) return;
+      // Only the ACTIVE target's field is mirrored; edits to other
+      // translations' Remarks must not leak into the proxy.
+      const mod = ta.closest && ta.closest('[data-module-name]');
+      const n = mod ? Utils.transNumFromModuleName(mod, ' Remarks') : null;
+      if (n === null || n !== cursor.get()) return;
       if (!previewEl) return;
       // Also breaks the composer→NOVA feedback loop: Utils.setNativeValue's
       // synthetic input event reaches here too, but previewEl.value is
@@ -373,8 +451,9 @@
     // instant you finish dragging, so quoting an excerpt is a decision you
     // make on purpose, not something that can happen by accident while
     // reading. The selection must sit entirely within one translation — a
-    // selection spanning more than one, or no selection at all, does
-    // nothing (with a hint) rather than guess which translation was meant.
+    // selection spanning more than one is rejected with a hint rather than
+    // guessing which translation was meant. With no selection at all, Q
+    // instead puts the caret at the end of the composer box (with a hint).
     //
     // Containment is checked against the TransN container itself (via
     // Range.intersectsNode), not `.preview-content` — a straight anchor/
@@ -456,13 +535,12 @@
       active = true;
       updatePillIcon(); // hides the pill now that the popover is open
       document.body.classList.add('rmd-active'); // yields the keyboard to us — Module 1 checks this class
-      // Load whatever's already in NOVA's Remarks field for this row (e.g.
-      // reopening after typing something, or an existing remark) instead of
-      // assuming it's empty.
-      const ta = remarkTextarea();
-      const val = ta ? ta.value : '';
-      if (previewEl) previewEl.value = val;
-      setPreview(val);
+      // Pick the initial target and load whatever's already in its Remarks
+      // field (e.g. reopening after typing something, or an existing remark)
+      // instead of assuming it's empty.
+      setHint('');
+      resolveInitialTarget();
+      updateLikely();
       if (popover) {
         // Size and position persist across reloads (v1.4.0) — fall back to
         // the fixed defaults / mouse-follow behavior only on a first-ever
@@ -479,14 +557,14 @@
           openPopover(lastMouseX, lastMouseY);
         }
       }
-      markTransTitles(true);
       syncOverlayGeometry();
     }
     function exit() {
       active = false;
       document.body.classList.remove('rmd-active');
       if (popover) popover.style.display = 'none';
-      markTransTitles(false);
+      applyTargetHighlight(); // active is false, so this removes the highlight
+      setHint('');
       updatePillIcon(); // shows the pill now that the popover is closed
     }
     function toggle() { if (active) exit(); else enter(); }
@@ -633,7 +711,11 @@
       const s = document.createElement('style');
       s.id = 'rmd-style';
       s.textContent = `
-        .rmd-clickable-title { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+        .rmd-active-target {
+          outline: 2px solid #3b5bdb; outline-offset: 2px; border-radius: 6px;
+          background: rgba(59,91,219,.06);
+        }
+        body.rmd-active .tl-active-score { box-shadow: none !important; background: none !important; }
         #rmd-popover {
           position: fixed; z-index: 2147483647; width: 380px; max-width: 92vw;
           min-width: 300px; min-height: 260px; box-sizing: border-box;
@@ -643,10 +725,10 @@
           display: none; flex-direction: column;
         }
         #rmd-head {
-          display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+          display: flex; align-items: center; gap: 6px; padding: 10px 12px;
           border-bottom: 1px solid #eee; cursor: move; user-select: none;
         }
-        #rmd-head .rmd-title { font-weight: 700; }
+        #rmd-head .rmd-title { font-weight: 700; white-space: nowrap; }
         #rmd-head button {
           border: 1px solid #dde1e6; background: #fff; color: #6b7280; border-radius: 7px;
           padding: 3px 9px; font-weight: 600; cursor: pointer; line-height: 1.4;
@@ -673,12 +755,13 @@
         #rmd-edit-bg {
           position: absolute; inset: 0; color: #334155; pointer-events: none; overflow: hidden; background: transparent;
         }
-        .rmd-tref { background: #fff3bf; border-radius: 3px; }
         #rmd-edit {
           position: relative; height: 72px; resize: vertical; border: none; outline: none;
           background: transparent; color: transparent; caret-color: #1f2430;
         }
+        #rmd-likely { padding: 0 12px 6px; font-size: 11px; color: #8a5a00; }
         #rmd-hint { padding: 0 12px 10px; font-size: 11px; color: #9aa0ac; }
+        #rmd-hint:empty { display: none; }
         #rmd-settings-overlay {
           position: fixed; inset: 0; z-index: 2147483647; background: rgba(15,23,42,.35);
           display: flex; align-items: center; justify-content: center;
@@ -722,9 +805,9 @@
       p.innerHTML = `
         <div id="rmd-head">
           <span class="rmd-title">📝 Remark Options</span>
+          <span style="flex:1;"></span>
           <span id="rmd-check-badge" title="Z cycles: Label Check → Submit Check → Check Off" style="
             font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
-          <span style="flex:1;"></span>
           <button id="rmd-settings-btn" title="Settings">⚙</button>
           <button id="rmd-clear-btn" title="Clear">Clear</button>
           <button id="rmd-close-btn" title="Close">✕</button>
@@ -734,10 +817,12 @@
           <div id="rmd-edit-bg" aria-hidden="true"></div>
           <textarea id="rmd-edit" spellcheck="false"></textarea>
         </div>
-        <div id="rmd-hint">Click a translation's title to reference it. Select text in a translation, then press <b>Q</b> to quote it. Click a chip to add a phrase. <span class="tl-kbd">Z</span> cycles the submit check, <span class="tl-kbd">Enter</span> runs it.</div>
+        <div id="rmd-likely"></div>
+        <div id="rmd-hint"></div>
         <div class="rmd-resize-handle" id="rmd-resize-handle" title="Drag to resize"></div>`;
       document.body.appendChild(p);
       popover = p;
+      lastPreviewText = null; // fresh backdrop element
       paletteEl = p.querySelector('#rmd-palette');
       previewEl = p.querySelector('#rmd-edit');
       bgEl = p.querySelector('#rmd-edit-bg');
@@ -756,8 +841,7 @@
       p.querySelector('#rmd-close-btn').addEventListener('click', exit);
 
       previewEl.addEventListener('input', () => {
-        const ta = remarkTextarea();
-        if (ta) Utils.setNativeValue(ta, previewEl.value); // mirror typed text into NOVA's real Remarks field
+        writeTarget(previewEl.value); // mirror typed text into the active target's real Remarks field
         setPreview(previewEl.value);
       });
       previewEl.addEventListener('scroll', syncOverlayGeometry);
@@ -855,6 +939,7 @@
 
     function cycleCheckMode() {
       checkModeIdx = (checkModeIdx + 1) % CHECK_MODES.length;
+      clearTimeout(autoAdvanceTimer); // a pending empty-row auto-Enter must not outlive Submit mode
       saveCheckModeIdx();
       updateCheckBadge();
       const mode = CHECK_MODES[checkModeIdx];
@@ -883,7 +968,15 @@
         return;
       }
 
-      if (Utils.inTextEntry()) return; // typing anywhere (including our own edit box) → letters/Enter are for typing, not shortcuts
+      if (Utils.inTextEntry()) return; // typing anywhere (including our own edit box) → letters/Enter/arrows are for typing, not shortcuts
+
+      // Arrows move the remark target while the composer is open and focus is
+      // outside any text-entry control (so the edit box keeps its caret keys).
+      if (active && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        moveTarget(e.key);
+        return;
+      }
 
       // Enter: the label-completeness check, moved here from Scoring
       // Shortcuts. Guarded against a focused popover control (a chip
@@ -903,12 +996,12 @@
       } else if (k === CFG.keyCycleCheck) {
         e.preventDefault();
         cycleCheckMode();
-      } else if (k === 'q' && active) {
-        // Only meaningful once the composer is open — Scoring Shortcuts
-        // still owns Q as "previous translation" everywhere else (it
-        // yields the keyboard via body.rmd-active whenever we're active,
-        // so there's no clash).
+      } else if (k === 'q') {
+        // Q is this module's key everywhere: with the composer closed it
+        // opens at the initial target first, with it open it appends to the
+        // currently highlighted target.
         e.preventDefault();
+        if (!active) enter();
         tryQuoteSelection();
       }
     }
@@ -932,15 +1025,11 @@
         if (sig !== lastRowSig) {
           lastRowSig = sig;
           if (active) {
-            // Row changed while composer is open → the Remarks field now
-            // belongs to a different row; reload our proxy from it instead
-            // of carrying over the previous row's text.
-            const ta = remarkTextarea();
-            const val = ta ? ta.value : '';
-            if (previewEl) previewEl.value = val;
-            setPreview(val);
+            // Row changed while composer is open → the Remarks fields now
+            // belong to a different row; re-resolve the initial target and
+            // reload our proxy from it instead of carrying over old text.
+            resolveInitialTarget();
           }
-          markTransTitles(active);
           // Nothing to score on this row and Submit Check is on: a real
           // Enter press would pass its completeness check vacuously anyway,
           // so press it for the user after a 1s pause instead of leaving
@@ -956,7 +1045,12 @@
             }, 1000);
           }
         }
-        if (active) syncPreview();
+        if (active) {
+          cursor.sync();          // re-anchor to the live targets after any re-render
+          applyTargetHighlight(); // restore the highlight if the module node was replaced
+          updateLikely();
+          syncPreview();
+        }
       }, 250);
     }
 
@@ -973,11 +1067,10 @@
       injectPopover();
       lastRowSig = getRowSig();
       document.addEventListener('keydown', onKeyDown, true);
-      document.addEventListener('mouseup', onDocMouseUp, true);
       document.addEventListener('input', onNovaRemarksInput, true);
       document.addEventListener('mousemove', (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
       const mo = new MutationObserver(onMutate);
-      mo.observe(document.body, { childList: true, subtree: true });
+      mo.observe(document.body, { childList: true, subtree: true, characterData: true });
       rlog('Started');
     }
 

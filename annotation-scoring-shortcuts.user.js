@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.4.7
+// @version      1.5.1
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,33 @@
 // ==/UserScript==
 
 /*
+ * v1.5.1 replaces the Remark help paragraph in the Scoring Shortcuts panel
+ * with keycap legend entries (Q Quote/Edit Remark, Z Cycle Checker, Enter
+ * Run Checker, Esc Back) and pins the Submit Check badge to the right edge of
+ * the Remark Options header so it stays put when the window is resized. Adds
+ * an offline capture pipeline (see captures/README.md) for refreshing the
+ * selector tests from a screenshot plus an outerHTML dump. No behavior change
+ * to scoring, remarks, or Submit Check.
+ */
+
+/*
+ * v1.5.0 adapts Remark Composer to the per-translation Remarks boxes: while
+ * Remark Options is open, the arrow keys choose which translation's Remarks
+ * box is written to (only when focus is outside a text box). The initial
+ * target is the first translation not scored 3 Points, and the first ↑ jumps
+ * back to Trans1. `Q` quotes the current selection into the targeted box;
+ * with nothing selected it jumps into the Remark Options box. Clicking a
+ * translation title no longer does anything (removed). Submit Check's Space
+ * now targets document.body when an input holds focus, and a label commit is
+ * read back before the check proceeds. The Remark Options help sentence moved
+ * to the bottom of the Scoring Shortcuts panel. A "Likely need remarks: …"
+ * line (2 Points / Confusing translations) now sits under the Remark Options
+ * text box, the "Trans N" highlight on its backdrop is removed (plain text),
+ * and the Trans-name parser accepts an optional space
+ * ("Trans 2 Remarks"). The Submit Check Space fix is UNVERIFIED on the live
+ * NOVA page (it assumes a hotkey guard on form controls) and needs a
+ * live-page Submit Check smoke test.
+ *
  * v1.4.7 widens Remark Composer's live "Trans N" highlight
  * (`highlightTransRefs` in src/remark-composer.js) to recognize a
  * comma/hyphen list after "Trans", not just a single number — "Trans 1, 2",
@@ -114,8 +141,10 @@
  * submission. On a clean check it synthesizes the same Space keypress your
  * own hand would send — but only after the identical label-completeness
  * check the other two modes use, and only as a direct, visible result of
- * your own Enter press. Never on a timer, never silently, and never in the
- * other two modes.
+ * your own Enter press, and never in the other two modes. The one exception
+ * is empty-row auto-advance: in Submit Check mode, a row with nothing to
+ * score makes a 1s timer dispatch Enter through that same check (cancelled
+ * by a row change or by cycling the mode).
  */
 
 (function () {
@@ -125,7 +154,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.4.7';
+  TL.SCRIPT_VERSION = 'v1.5.1';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

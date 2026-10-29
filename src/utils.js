@@ -87,12 +87,15 @@
 
     // Which translation number a given module belongs to, read off its own
     // `data-module-name` (e.g. "Trans3 Score" -> 3 with suffix=" Score", or
-    // plain "Trans3" -> 3 with suffix=""). Was written independently in
-    // Scoring Shortcuts, Remark Composer, and QC Compare — same regex,
-    // three copies.
+    // plain "Trans3" -> 3 with suffix=""). A single space between Trans and
+    // its number is optional so the observed "Trans 2 Remarks" spelling
+    // parses the same way; the suffix still has to match exactly. Was
+    // written independently in Scoring Shortcuts, Remark Composer, and QC
+    // Compare — same regex, three copies.
     transNumFromModuleName(mod, suffix = '') {
       if (!mod) return null;
-      const m = new RegExp(`^Trans(\\d+)${suffix}$`).exec(mod.getAttribute('data-module-name') || '');
+      const name = mod.getAttribute('data-module-name') || '';
+      const m = new RegExp(`^Trans ?(\\d+)${suffix}$`).exec(name);
       return m ? parseInt(m[1], 10) : null;
     },
 
@@ -370,9 +373,18 @@
     // keydown+keyup pair, bubbling, the same "real sequence of events"
     // approach Utils.fireMouse uses for synthetic mouse input. Targets
     // document.activeElement (falling back to document) since that's what a
-    // real Space press would be scoped to.
+    // real Space press would be scoped to — except when that is a form
+    // control or editable element (e.g. the Ant cascader's readonly search
+    // input, which keeps focus after a mouse-picked score). Hotkey handlers
+    // typically ignore keys aimed at those, so the event goes to the body.
+    // UNVERIFIED against the live NOVA page: the body retarget rests on an
+    // assumed hotkey guard, and Submit Check needs a live-page smoke test
+    // before being trusted (see tests/fixtures/README.md).
     dispatchNativeSpace() {
-      const target = document.activeElement || document;
+      let target = document.activeElement || document;
+      if (target.nodeType === 1 && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
+        target = document.body;
+      }
       const opts = { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true };
       target.dispatchEvent(new KeyboardEvent('keydown', opts));
       target.dispatchEvent(new KeyboardEvent('keyup', opts));

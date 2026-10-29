@@ -1,0 +1,23 @@
+# PLANNING
+
+Design specs, implementation plans, and execution reports for tempMonkeyScript.
+Nothing here is loaded by the userscript.
+
+## v1.5.0 — annotation UI adaptation
+
+| Document | What it is |
+|---|---|
+| `specs/2026-10-29-v1.5.0-annotation-ui-adaptation-design.md` | The design and the confirmed decisions (initial target, first-`↑` jump, `Q` routing, title-click removal) |
+| `plans/2026-10-29-v1.5.0-annotation-ui-adaptation.md` | The task plan, with the per-task commit table and the live-page checklist at the top |
+| `reports/v1.5.0/task-1-report.md` … `task-6-report.md` | Each implementer's report: what was built, red/green test evidence, concerns. Fix rounds are appended at the end of each file |
+| `reports/v1.5.0/final-fix-report.md` | The fix wave after the whole-branch review |
+| `reports/v1.5.0/final-review.md` | Summary of the whole-branch review and how each finding was resolved |
+| `reports/v1.5.0/ledger.md` | The execution ledger: pre-flight scan, every ruling made on your behalf (with what it costs if wrong), deferred minors |
+
+## Earlier
+
+| Document | What it is |
+|---|---|
+| `specs/2026-08-27-v1.4.1-closed-state-pills-design.md` | v1.4.1 design |
+| `plans/2026-08-27-v1.4.1-closed-state-pills.md` | v1.4.1 plan |
+| `plans/2026-09-10-v1.5-testing-and-histo-db-roadmap.md` | Older scoping roadmap. The test-infrastructure half is superseded by the v1.5.0 plan; Module 4 (Histo_DB) is planned for **v1.6** |

@@ -1,5 +1,14 @@
 # tempMonkeyScript
 
+> **Current version: `v1.5.1`, on `main`.** It is covered by an automated
+> Playwright suite (`npm test`) but not yet verified on the live NOVA page.
+> Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
+> the next time Tampermonkey refreshes the `@require`d files. Submit Check
+> mode in particular has only been checked against a *model* of the page — see
+> "Known unverified" below before relying on it. The design, plan, and
+> per-task reports are in `PLANNING/`; to refresh the tests from a new page
+> screenshot and outerHTML dump, see `captures/README.md`.
+
 A Tampermonkey userscript that adds a productivity layer on top of a
 human-in-the-loop translation annotation workbench: annotators are shown a
 source post and up to 7 machine translations of it ("Trans1"–"Trans7"), and
@@ -35,8 +44,11 @@ page:
    to mouse into a dropdown for every one of the ~7 translations on every
    row.
 2. **Remark Composer** — a fast way to build structured, consistent
-   free-text remarks by clicking translation excerpts and pre-written
-   category chips instead of typing full sentences by hand.
+   free-text remarks by quoting translation excerpts (select, then `Q`) and
+   clicking pre-written category chips instead of typing full sentences by
+   hand. As of `v1.5.0` every translation has its own Remarks box on the page,
+   so the composer writes into whichever translation's box is highlighted, and
+   shows which translations (scored 2 Points or Confusing) probably need one.
 3. **QC Compare** — for the separate quality-check pass: shows both
    annotators' scores/text side by side (the platform only shows one at a
    time) and lets a reviewer swap to the other annotator's value, or relabel
@@ -66,7 +78,30 @@ src/trans-cursor.js                    shared active-translation cursor (Scoring
 src/scoring-shortcuts.js               Module 1
 src/remark-composer.js                 Module 2 (also owns the submit-check system, see below)
 src/qc-compare.js                      Module 3
+tests/                                 Playwright suite + a reduced copy of the annotation page (not shipped)
+captures/                              offline page captures (screenshot + outerHTML); see captures/README.md
+scripts/capture-ingest.js              turns a pasted outerHTML .txt into a capture and checks the selector contract
+PLANNING/                              design specs, implementation plans, per-task reports
 ```
+
+### Running the tests
+
+The shipped script stays plain files with no build step; the tests are
+development-only and are never loaded by Tampermonkey.
+
+```
+npm install
+npx playwright install chromium   # first time only
+npm test
+```
+
+The suite loads the real `src/*.js` files against `tests/fixtures/
+annotation.html`, a reduced copy of the annotation page (seven translations,
+a simulated cascader, and a Space-to-submit counter). Trans4–7 carry lorem
+ipsum filler so the right-hand column is exercised; Trans3 is empty on
+purpose, to cover skipping empty translations. See `tests/fixtures/README.md`
+for provenance and the modelled-platform assumptions. QC Compare has no
+page-level tests, because no captured QC page exists to build one from.
 
 `@require` has no code-splitting — every file above downloads and executes
 on every matching page load, regardless of URL. Which module is actually
@@ -86,8 +121,8 @@ Tampermonkey's own schedule rather than instant).
 per item, with no other models' phrasing to compare against. The plan is a
 strictly read-only lookup panel — never touching scoring, labels, or the
 submit button — driven by an offline-built `ref.json` file. Not started;
-there's no code for it anywhere in this repo yet. Deferred to `v1.5`, after
-the `v1.4.0` module-split refactor.
+there's no code for it anywhere in this repo yet. Deferred to `v1.6`; it was
+moved out of `v1.5` so that release could be the annotation-UI adaptation.
 
 ## Shortcuts (current)
 
@@ -109,7 +144,7 @@ entirely rather than carried along. See `src/scoring-shortcuts.js` and
 | `3` | Score the active translation "3 Points", then auto-advance |
 | `C` | Score it "Confusing", then auto-advance |
 | `2` | Score it "2 Points", stay put — leaves the label menu open |
-| `1`–`9`, `0` | While a label menu is open: pick the Nth item |
+| `1`–`9`, `0` | While a label menu is open: pick the Nth item (`0` = the 10th). The pick only advances once the displayed value has actually changed to a completed label; if the click didn't take, it stays put and says so |
 | `X` | Clear the active translation's score, stay put |
 | `↑` / `↓` | Move the active translation |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
@@ -124,11 +159,27 @@ since the submit check is a page-level guard, not a composer-UI feature)
 
 | Key | Effect |
 |---|---|
-| `O` | Open/close the Remark Options window |
+| `O` | Open/close the Remark Options window. On open, the Remarks box of the first translation *with text* that isn't scored 3 Points is selected and outlined (empty/unscored counts); Trans1 if every score begins with 3 Points |
+| `↑` / `↓` / `←` / `→` | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). If `↑` is your first arrow press after opening, it jumps to Trans1; after any arrow press movement is sequential |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
 | `Enter` | Run the check now, safely — blocks on an incomplete label per the current check mode; in Submit Check mode, a clean pass also submits (synthesizes Space) |
-| `Q` | Quote the current selection (or, with nothing selected, focus the composer's edit box) |
+| `Q` | Quote the current selection into the highlighted Remarks box as `Trans N "…"`. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box. A selection spanning two translations is refused |
 | `Esc` | Close the window, or close its Settings panel if that's open |
+
+Practical consequence of the focus rule: clicking a chip or pressing `Q`
+moves the cursor into the Remark Options edit box, where arrows move the caret
+as usual — click outside the box before using the arrows to change target.
+
+Under the edit box a "Likely need remarks" line lists translations scored
+`2 Points` (bare or fully labelled) or `Confusing`; `3 Points` and unscored
+ones are left out. It is informational only — it never changes the target or
+blocks a write. While the window is open, Scoring Shortcuts' own active-score
+highlight is hidden so only the Remarks target is outlined. These keys are
+listed in the Scoring Shortcuts legend (`Q`, `O`, `Z`, `Enter`, `Esc`).
+
+Clicking a translation's title no longer inserts a `Trans N` reference (removed
+in `v1.5.0`; `Q` is the only way to quote), and the live "Trans N" highlight in
+the edit box is gone with it.
 
 The window's position and size now persist across reloads, the same way
 Module 1's panel always has (see "Storage keys" below) — previously this
@@ -215,7 +266,10 @@ Invariants the script is expected to keep, regardless of what else changes:
     than genuinely shared state.
 
   Beyond those three, no module reads another module's internal state
-  directly.
+  directly. One small coupling is by CSS class name only, no state: while
+  the composer is open (`body.rmd-active`), its stylesheet hides Scoring
+  Shortcuts' `.tl-active-score` highlight. Rename that class and the two
+  highlights would show at once.
 - **Comment convention:** English first; original Chinese kept in
   parentheses immediately after, for any comment carrying real design
   rationale (not for every line) — e.g. `// Collapse other cascaders first,
@@ -256,6 +310,27 @@ around it:
   followed by reading the displayed value back and confirming it matches
   what was requested; a mismatch stops and surfaces rather than silently
   applying the wrong score.
+- **One Remarks box per translation (Module 2, `v1.5.0`).** Remarks fields are
+  found by module name — `TransN Remarks`, parsed with
+  `Utils.transNumFromModuleName(mod, ' Remarks')` — and the platform spells
+  Trans2's as `Trans 2 Remarks` (with a space), so the parser accepts one
+  optional space between `Trans` and the number. The same name is rendered
+  more than once (nested wrappers), so the first match per number wins. Every
+  write goes through `Utils.setNativeValue` to the textarea *re-queried by
+  Trans number at write time*, never a stored node, because React may replace
+  the element between renders. Switching target only reloads the edit box; it
+  never writes to the box you left.
+- **Submit Check's Space goes to `document.body` when an input has focus
+  (`v1.5.0`).** `Utils.dispatchNativeSpace` still sends exactly one keydown +
+  keyup pair, but if the focused element is an input, textarea, select, or
+  contenteditable (e.g. the cascader's readonly search box, which keeps focus
+  after a mouse pick) it targets `document.body` instead, since page hotkey
+  handlers commonly ignore keys aimed at inputs. This rests on an assumption
+  about NOVA — see "Known unverified".
+- **Empty-row auto-advance.** In Submit Check mode, after a row change to a row
+  with nothing to score, a 1-second timer dispatches Enter through the same
+  check. It is cleared on every row change and when `Z` leaves the mode. This
+  is the one case where Submit Check acts without a keypress from you.
 - **Sibling-box insertion (Module 3's compare boxes).** The Remarks and
   Rewrite fields have a layout-enforced fixed height with `overflow:
   visible` — content appended *inside* them overflows past the bottom edge
@@ -281,7 +356,104 @@ around it:
   original; the header comment was simply stale. (Module 3 only gained real
   arrow-key navigation later, in `v1.3.2`.)
 
+## Known unverified (as of `v1.5.0`)
+
+Things the automated suite cannot prove, because the fixture is a *model* of
+the page and the captured HTML contains no event listeners. Check these on a
+real annotation row:
+
+- **Submit Check → Space.** The page's real Space listener is not in the
+  capture. The `v1.5.0` fix assumes NOVA ignores Space aimed at an input and
+  accepts one aimed at `body`. If NOVA also requires a *trusted* keypress, no
+  synthetic Space can work and the approach needs rethinking. Until checked,
+  Label Check (which never presses Space) is the safe mode.
+- **Remark target highlight.** It is a class on the outer `TransN Remarks`
+  wrapper; whether it is visible depends on the page's CSS, and a React
+  rewrite of that wrapper's `class` would drop it until the next DOM change.
+- **Arrow targets and `Q`** on the real per-translation Remarks boxes.
+- **Re-picking the label already shown.** A label pick advances only if the
+  displayed value changed, so re-choosing the same label reads as "not
+  applied"; whether the real cascader resets to a bare `2 Points` first
+  (which avoids this) is untested.
+- **Dropdown popups.** The fixture renders them inside the control; the real
+  page may attach them to `body`. Scoring matches popups by distance to the
+  clicked selector, so this should work but is unconfirmed.
+- **Live-updating text** in the first 80 characters of the source/Trans1 block
+  would be read as a row change and snap the Remark target back.
+
 ## Version history
+
+### `v1.5.1` — Legend keycaps, badge pinned right, capture pipeline
+
+- Scoring Shortcuts: the Remarks help paragraph (added in `v1.5.0`) is gone.
+  The legend now has keycap entries instead: `Q` Quote/Edit Remark (before
+  `O`), `Z` Cycle Checker, `Enter` Run Checker, `Esc` Back.
+- Remark Options: the Label/Submit/Off check badge sits at the right of the
+  header next to the gear, so it stays put when the window is resized; the
+  title no longer wraps. The header also fits its buttons inside the window.
+- New offline capture pipeline: `npm run capture -- <dump.txt> [--screenshot
+  <img>]` stores a sanitized copy of the page under `captures/` (gitignored)
+  and checks it against one selector contract
+  (`tests/helpers/selector-contract.js`), which `npm test` also runs against
+  the reduced fixture and every local capture. See `captures/README.md`.
+- No change to scoring, remark targeting, or Submit Check behavior.
+
+### `v1.5.0` — Per-translation Remarks, Submit Check Space fix, Playwright suite
+
+The annotation page changed: each translation now has its **own** Remarks box
+(`Trans1 Remarks` … `Trans7 Remarks`) instead of one shared `Remarks` field.
+The old single-field lookup found nothing, so Remark Composer wrote nowhere.
+Scoped to the annotation-page work; Module 4 (Single-model Reference) moved to
+`v1.6`. QC Compare and `TransCursor` are unchanged.
+
+**Remark Composer (`src/remark-composer.js`).**
+- Writes go to the highlighted translation's Remarks box (re-queried by Trans
+  number at write time, written through `Utils.setNativeValue`); the box is
+  outlined with `rmd-active-target` while the window is open. Arrow keys
+  choose the target (see the Module 2 table); empty translations are skipped.
+- Initial target on `O` (and on `Q` when closed): the first translation with
+  text whose score doesn't begin with `3 Points`, else Trans1. The first `↑`
+  after opening jumps to Trans1; any other arrow ends that one-shot.
+- `Q` appends to the highlighted target and never changes it while the window
+  is open; closed, it opens first. Nothing selected focuses the edit box.
+- New "Likely need remarks" line under the edit box (`2 Points`, `Confusing`).
+- **Removed:** clicking a translation title to insert `Trans N`, and the live
+  "Trans N" highlight in the edit box (`highlightTransRefs`, added in
+  `v1.4.7`, is gone). The backdrop only repaints when its text changes — the
+  old repaint-every-settle also re-triggered the page observer in a loop.
+- While open, Scoring Shortcuts' active-score highlight is hidden by CSS.
+- The usage hint moved from Remark Options to the Scoring
+  Shortcuts panel. The panel now has `max-height: calc(100vh - 16px)` and
+  scrolls instead of running off a short screen.
+
+**Submit Check Space (`src/utils.js`).** `dispatchNativeSpace` targets
+`document.body` when an input, textarea, select, or contenteditable has focus;
+otherwise the active element as before. Still one keydown + keyup pair, still
+never clicks the button. **Unverified on live NOVA** (see "Known unverified").
+`Z` now also cancels a pending empty-row auto-advance timer.
+
+**Scoring Shortcuts (`src/scoring-shortcuts.js`).** The label commit used to
+advance as soon as *any* value was shown, which a bare `2 Points` already
+satisfies — so a label click that failed to register still advanced. It now
+requires the displayed value to change and not be a bare `2 Points`; otherwise
+it stays put and says so. The reported lateral-arrow problem (Trans1–3 ↔
+Trans4–7) **did not reproduce** against the new markup once Trans4–7 had text
+(the capture's Trans4–7 were empty, which scoring skips by design), so the
+arrow logic was left unchanged.
+
+**Shared (`src/utils.js`).** `transNumFromModuleName` accepts one optional space
+after `Trans`, so Trans2's `Trans 2 Remarks` parses; suffix matching is still
+exact. As a side effect `Trans 2 Score` / `Trans 2` would also match — pinned by
+a test, no such module exists on the page today.
+
+**Tests.** First automated tests in the repo: a Playwright suite (`npm test`)
+against `tests/fixtures/annotation.html`, built from the captured page, with
+lorem ipsum in Trans4–7. It covers parser/cursor behavior, scoring and label
+advance (including failed clicks), the Submit Check modes and Space-to-submit
+path, per-translation Remark targeting and `Q`, and layout/version smoke
+checks. Several tests were mutation-checked (the guarded line removed, the
+test seen to fail). `PLANNING/` holds the design, the task plan, and the
+per-task reports with their red/green evidence.
 
 ### `v1.4.7` — Highlight overlay recognizes multi-translation "Trans N" references
 

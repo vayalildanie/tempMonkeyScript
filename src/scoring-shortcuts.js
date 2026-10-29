@@ -492,9 +492,23 @@
     // the row is unchanged, so if the list shifted mid-label-pick the advance
     // could land on the wrong translation. Carrying the Trans number instead
     // of an index makes that mismatch impossible to express.
-    async function commitLabelAndAdvance(mod, num, nums) {
-      await Utils.waitFor(() => mod && readSelected(mod).length > 0, 600).catch(() => {});
+    //
+    // `before` is the displayed value captured just before the leaf click.
+    // After a "2 Points" pick the control already shows a non-empty value, so
+    // "non-empty" proves nothing — only a value that differs from `before` and
+    // is not bare "2 Points" shows the platform accepted the leaf. If it
+    // didn't, nothing advances and label mode stays on so the pick can be retried.
+    async function commitLabelAndAdvance(mod, num, nums, before) {
+      const accepted = () => {
+        const v = mod ? readSelected(mod).trim() : '';
+        return v !== '' && v !== before && v !== CFG.pathKey2;
+      };
+      await Utils.waitFor(accepted, 600).catch(() => {});
       const got = mod ? readSelected(mod) : '';
+      if (!accepted()) {
+        setStatus(`⚠️ Label not applied — Trans${num} still shows "${got || 'empty'}"; press a number to retry`);
+        return;
+      }
       labelMode = false;
       clearLabelBadges();
       if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
@@ -529,11 +543,13 @@
         const mod = scoreModuleFor(num);
         const colsBefore = cols.length;
 
+        const before = mod ? readSelected(mod).trim() : '';
+
         Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
 
         if (isLeaf) {
           // The platform doesn't auto-close the menu for a leaf pick, so we commit and advance ourselves.
-          await commitLabelAndAdvance(mod, num, nums);
+          await commitLabelAndAdvance(mod, num, nums, before);
           return;
         }
 
@@ -551,8 +567,11 @@
         const deepest = newCols[newCols.length - 1];
         const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
         if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
+          // The category click may already have changed the displayed value, so
+          // read it again right before the leaf click.
+          const beforeLeaf = mod ? readSelected(mod).trim() : '';
           Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
-          await commitLabelAndAdvance(mod, num, nums);
+          await commitLabelAndAdvance(mod, num, nums, beforeLeaf);
         } else {
           setStatus('Category selected — press a number for the sub-label');
         }
@@ -700,7 +719,7 @@
         'background:#fff', 'border:1px solid #d9d9e3', 'border-radius:10px',
         'box-shadow:0 6px 24px rgba(0,0,0,.15)', 'padding:8px 14px', 'width:min(680px, 96vw)',
         'font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', 'color:#1f2430',
-        'box-sizing:border-box', 'overflow:auto',
+        'box-sizing:border-box', 'overflow:auto', 'max-height:calc(100vh - 16px)',
       ].join(';');
       p.innerHTML = `
         <div id="tl-score-head" style="display:flex;align-items:center;gap:8px;cursor:move;user-select:none;margin-bottom:6px;">
@@ -719,7 +738,11 @@
           <span style="white-space:nowrap;"><span class="tl-kbd">X</span> Erase score</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">1</span>–<span class="tl-kbd">9</span> Label/Score Selection</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">↑</span><span class="tl-kbd">↓</span><span class="tl-kbd">←</span><span class="tl-kbd">→</span> Move Translation Focus</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Q</span> Quote/Edit Remark</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">O</span> Remark Options</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Z</span> Cycle Checker</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Enter</span> Run Checker</span>
+          <span style="white-space:nowrap;"><span class="tl-kbd">Esc</span> Back</span>
           <span style="white-space:nowrap;"><span class="tl-kbd">P</span> Show/hide Legend</span>
         </div>
         <div id="tl-score-statusrow" style="display:flex;gap:12px;align-items:baseline;border-top:1px solid #eee;margin-top:6px;padding-top:6px;">
