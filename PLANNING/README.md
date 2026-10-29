@@ -3,6 +3,13 @@
 Design specs, implementation plans, and execution reports for tempMonkeyScript.
 Nothing here is loaded by the userscript.
 
+## v1.5.2 — remark click selection
+
+| Document | What it is |
+|---|---|
+| `specs/2026-10-29-v1.5.2-remark-click-selection-design.md` | The approved design: delegated click selection, direct-edit synchronization, and existing arrow eligibility |
+| `plans/2026-10-29-v1.5.2-remark-click-selection.md` | The implementation plan, including its regression and release tasks |
+
 ## v1.5.0 — annotation UI adaptation
 
 | Document | What it is |
