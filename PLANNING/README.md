@@ -7,7 +7,7 @@ Nothing here is loaded by the userscript.
 
 | Document | What it is |
 |---|---|
-| `specs/2026-10-29-submit-check-non3-remarks-design.md` | Proposed likely `v1.5.3`: hold submission when a populated non-3 score has an empty remark, and make Escape unfocus a selected remark textbox. Not approved and not on `main`. |
+| `specs/2026-10-29-submit-check-non3-remarks-design.md` | Proposed likely `v1.5.3`: hold submission when a populated non-3 score has an empty remark, make Escape unfocus a selected remark textbox, and allow `Q` to quote the left Note field. Not approved and not on `main`. |
 
 ## v1.5.2 — remark click selection
 

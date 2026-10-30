@@ -1,4 +1,4 @@
-# Proposed v1.5.3 — Submit Check remark gate and Escape to unfocus
+# Proposed v1.5.3 — Submit Check remark gate, Escape unfocus, and Note quotes
 
 Status: proposed only. Not approved for implementation, and not part of `v1.5.2`. Both requests below are intended to ship together as a likely `v1.5.3`.
 
@@ -48,6 +48,15 @@ Today Escape is handled before the text-entry guard. While Remark Options is ope
 - A following Escape, once no remark textbox is focused, keeps the current close behavior (settings first, otherwise the window). This is the proposed way to keep Esc as Back after the new first press.
 - Escape does not blur unrelated page fields, score controls, or the settings form.
 
+## Quote the left Note field
+
+`Q` currently accepts a selection only when it sits inside exactly one `Trans N` module. The left-hand source field, titled **Note**, is therefore refused. The annotator wants to quote from that field the same way as from a translation.
+
+- Identify the Note module by its visible title `Note`, and by `data-module-key="NoteTrans"` when that attribute is present. Confirm the live module name before implementation; the reduced fixture does not currently include this field.
+- A selection entirely inside Note quotes as `Note "selected text"` into the remark target `Q` already uses. It does not change the selected remark.
+- The same tag-stripping and trimming rules apply. A selection that spans Note and a translation, or more than one translation, is still refused.
+- Quoting Note does not make Note a remark target, a score target, or something that needs its own remark.
+
 ## Verification when implemented
 
-Tests should prove: a non-3 score with an empty or whitespace-only remark blocks Submit Check and dispatches no Space; the same score with any non-whitespace remark can pass; a `3 Points` score passes with an empty remark; a missing label still blocks even if a remark is present; Label Check also blocks a missing required remark; Check Off does not; and `Trans 2 Remarks` is read correctly. They should also prove that Escape blurs either remark textbox without closing the window or changing its text, and that a second Escape still closes. Live NOVA verification would still be required for the real Space listener.
+Tests should prove: a non-3 score with an empty or whitespace-only remark blocks Submit Check and dispatches no Space; the same score with any non-whitespace remark can pass; a `3 Points` score passes with an empty remark; a missing label still blocks even if a remark is present; Label Check also blocks a missing required remark; Check Off does not; and `Trans 2 Remarks` is read correctly. They should also prove that Escape blurs either remark textbox without closing the window or changing its text, and that a second Escape still closes. Note coverage should prove that a selection inside Note appends `Note "…"`, that a selection crossing Note and a translation writes nothing, and that the remark target is unchanged. Live NOVA verification would still be required for the real Space listener and for the Note module's actual attributes.
