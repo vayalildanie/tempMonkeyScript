@@ -1,6 +1,6 @@
-# Proposed — Submit Check also requires remarks for non-3 scores
+# Proposed v1.5.3 — Submit Check remark gate and Escape to unfocus
 
-Status: proposed only. Not approved for implementation, and not part of `v1.5.2`.
+Status: proposed only. Not approved for implementation, and not part of `v1.5.2`. Both requests below are intended to ship together as a likely `v1.5.3`.
 
 ## Why
 
@@ -37,8 +37,17 @@ The blocked message should name the translation and distinguish a missing label 
 - Do not judge whether the remark is adequate, only that it is non-empty after trimming.
 - Do not change scoring, arrow navigation, click-to-select, quote routing, or QC Compare.
 - Do not make the script click Submit or send more than the existing single Space on a clean pass.
-- Do not treat this document as authorization to implement. Behavior, copy, and version stay at `v1.5.2` until a later approved change.
+- Do not treat this document as authorization to implement. Behavior, copy, and version stay at `v1.5.2` until this proposal is approved and released, likely as `v1.5.3`.
+
+## Escape unfocuses a selected remark textbox
+
+Today Escape is handled before the text-entry guard. While Remark Options is open, Escape closes the window even if a remark textbox has focus. The annotator wants a selected remark textbox to be unselected instead: pressing Escape blurs that box and leaves its text and the current target unchanged.
+
+- Applies to the Remark Options edit box (`#rmd-edit`) and to a NOVA per-translation Remarks textarea.
+- The first Escape only removes focus. It does not close Remark Options, clear the field, or move the target.
+- A following Escape, once no remark textbox is focused, keeps the current close behavior (settings first, otherwise the window). This is the proposed way to keep Esc as Back after the new first press.
+- Escape does not blur unrelated page fields, score controls, or the settings form.
 
 ## Verification when implemented
 
-Tests should prove: a non-3 score with an empty or whitespace-only remark blocks Submit Check and dispatches no Space; the same score with any non-whitespace remark can pass; a `3 Points` score passes with an empty remark; a missing label still blocks even if a remark is present; Label Check also blocks a missing required remark; Check Off does not; and `Trans 2 Remarks` is read correctly. Live NOVA verification would still be required for the real Space listener.
+Tests should prove: a non-3 score with an empty or whitespace-only remark blocks Submit Check and dispatches no Space; the same score with any non-whitespace remark can pass; a `3 Points` score passes with an empty remark; a missing label still blocks even if a remark is present; Label Check also blocks a missing required remark; Check Off does not; and `Trans 2 Remarks` is read correctly. They should also prove that Escape blurs either remark textbox without closing the window or changing its text, and that a second Escape still closes. Live NOVA verification would still be required for the real Space listener.
