@@ -584,7 +584,7 @@
     // Keyboard
     // ====================================================================
 
-    // Is the user currently typing somewhere (Remarks/Rewrite, etc.)? If so,
+    // Is the user currently typing somewhere (a Remarks box, etc.)? If so,
     // number/letter keys must be left alone for typing, not intercepted.
     // Moved to Utils in v1.3.2, unchanged, when Module 3 grew a keyboard and
     // needed the same test — including the readonly-input exemption for the
@@ -616,7 +616,7 @@
         if (labelMode) { e.preventDefault(); exitLabelMode(); setStatus('Label pick cancelled'); }
         return;
       }
-      if (inTextEntry()) return; // typing in Remarks/Rewrite → letter/number keys are for typing, not shortcuts
+      if (inTextEntry()) return; // typing in a Remarks box → letter/number keys are for typing, not shortcuts
 
       // Show/hide the whole panel. Checked before the enabled gate below,
       // same as Esc — you can always get the window back even while
