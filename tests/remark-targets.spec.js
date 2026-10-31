@@ -103,6 +103,8 @@ function makeSelection(page, key) {
     const noteBody = q('[data-module-key="NoteTrans"] #content');
     const noteHead = q('[data-module-key="NoteTrans"] h1');
     const ctx = q('[data-module-name="Context-EN"] .preview-content');
+    const expandBtn = q('[data-module-key="NoteTrans"] .expand-btn');
+    const imageList = q('[data-module-key="NoteTrans"] .image-list-container');
     const r = document.createRange();
     const toEnd = (el) => r.setEnd(el, el.childNodes.length);
     switch (key) {
@@ -126,6 +128,9 @@ function makeSelection(page, key) {
         r.selectNodeContents(text(6));
         break;
       case 'two-translations': r.setStart(text(4), 0); toEnd(text(5)); break;
+      case 'note-into-collapse': r.setStart(noteBody, 0); toEnd(expandBtn); break;
+      case 'note-through-pictures': r.setStart(noteHead, 0); toEnd(imageList); break;
+      case 'collapse-only': r.selectNodeContents(expandBtn); break;
       case 'note-and-translation': r.setStart(noteBody, 0); toEnd(text(1)); break;
       case 'context-and-translation': r.setStart(ctx, 0); toEnd(text(1)); break;
       case 'context-only': r.selectNodeContents(ctx); break;
@@ -686,17 +691,20 @@ test.describe('quoting', () => {
     ['a whole translation', 'whole', true],
     ['part of a translation', 'part', true],
     ['a whole translation ending on the parent of .preview-content', 'parent-boundary', true],
-    ['Note body text', 'note-body', true],
-    ['Note heading and body together', 'note-heading-and-body', true],
+    ['Note body text', 'note-body', true, 'Note body sed ut perspiciatis unde omnis iste natus error.'],
+    ['Note heading and body together', 'note-heading-and-body', true, 'Note heading lorem titleNote body sed ut perspiciatis unde omnis iste natus error.'],
     ['text wrapped in an annotation tag', 'tagged', true],
     ['Trans4 to Trans5', 'two-translations', false],
+    ['Note body running into the Collapse control', 'note-into-collapse', false],
+    ['Note heading through the picture list', 'note-through-pictures', false],
+    ['the Collapse control alone', 'collapse-only', false],
     ['Note plus Trans1', 'note-and-translation', false],
     ['Context-EN plus Trans1', 'context-and-translation', false],
     ['Context-EN only', 'context-only', false],
     ['a title plus its translation text', 'title-and-text', false],
     ['the whole page (select all)', 'select-all', false],
   ];
-  for (const [label, key, accepted] of sources) {
+  for (const [label, key, accepted, exact] of sources) {
     test(`${accepted ? 'quotes' : 'refuses'} ${label}`, async ({ page }) => {
       await setScores(page, ALL_EMPTY);
       await openComposer(page);
@@ -707,10 +715,16 @@ test.describe('quoting', () => {
         const expected = key === 'tagged' ? 'Tagged words here' : raw.trim();
         await expectRemarks(page, { 1: `"${expected}"`, 2: '', 4: '', 5: '' });
         await expect(edit(page)).toHaveValue(`"${expected}"`);
+        // The token is the page's own text and nothing from the Note's chrome.
+        const token = (await remarksValues(page))[1];
+        expect(token).not.toMatch(/Collapse|Pictures|Small|Medium|Large|cover/);
+        if (exact) expect(token.replace(/\s+/g, '')).toBe(`"${exact}"`.replace(/\s+/g, ''));
       } else {
         await expect(page.locator('#rmd-hint')).toContainText('one translation or the Note');
         await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
         await expect(edit(page)).toHaveValue('');
+        // A refusal leaves the selection in place so it can be adjusted.
+        expect(await page.evaluate(() => window.getSelection().toString())).not.toBe('');
       }
       await expectTarget(page, 1);
     });
@@ -813,6 +827,28 @@ test.describe('escape', () => {
     await page.locator('#fx-submit').focus();
     await page.keyboard.press('Escape');
     await expect(page.locator('#rmd-popover')).toBeHidden();
+  });
+
+  test('closes on the first Escape when an unrelated textarea (the header remark bar) has focus', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await page.locator('#form_item_remark').focus();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeHidden();
+  });
+
+  test('leaves an Escape that is part of IME composition to the IME', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await edit(page).click();
+    const prevented = await page.evaluate(() => {
+      const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, isComposing: true });
+      document.activeElement.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(prevented).toBe(false);
+    await expect(page.locator('#rmd-popover')).toBeVisible();
+    expect(await focusedId(page)).toBe('rmd-edit');
   });
 });
 

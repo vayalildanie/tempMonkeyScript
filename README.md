@@ -200,8 +200,8 @@ window reset to a fixed size every time it was reopened.
 | `3` / `2` / `C` | Relabel the active translation directly to 3 Points / (open) 2 Points / Confusing |
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item |
 | `X` | Clear the active translation's score |
-| `Z` | Swap the active translation to the other annotator's value (press again to swap back); on a selected Remark +Add line, append that line; on Rewrite, swap/undo it the same as its "Swap →"/"Undo" button |
-| `↑` / `↓` | Move the active translation — past the last one, continues into the Remarks +Add lines, then Rewrite |
+| `Z` | Flip the active translation's Score **and** Remark between Annotator 1's and Annotator 2's original values (press again on it to flip back). Both originals are kept for the row, so if you clear or edit either side, `Z` restores from them instead of stopping. A hand-edited unit is noted in the badge before it is overwritten. Every `Z` that writes moves on to the next translation (to flip one back, step up and press `Z`); a refused `Z` stays put (Annotator 2's tab is showing, nothing differs, or Annotator 2 has no score) |
+| `↑` / `↓` | Move the active translation. Its Score and its Remarks box are outlined together; the Swap/Undo badge stays between them |
 | `←` / `→` | Swap columns (Trans1–3 / Trans4–7) |
 | `O` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle (moved from `P` in `v1.4.0`, to match Module 2's open/close key — the two modules are URL-exclusive so there's no clash) |
 | `Esc` | Cancel an in-progress label pick |
@@ -339,20 +339,21 @@ around it:
   with nothing to score, a 1-second timer dispatches Enter through the same
   check. It is cleared on every row change and when `Z` leaves the mode. This
   is the one case where Submit Check acts without a keypress from you.
-- **Sibling-box insertion (Module 3's compare boxes).** The Remarks and
-  Rewrite fields have a layout-enforced fixed height with `overflow:
-  visible` — content appended *inside* them overflows past the bottom edge
-  and gets covered by whatever renders next. Inserting the compare box
-  immediately *after* the field in the DOM gives it its own space instead.
+- **Preserved pair and flip-flop (Module 3, `v1.5.3`).** When a row is scraped,
+  each translation keeps both annotators' original score and remark. `Z`
+  flips Annotator 1's live score-and-remark between those two originals; it
+  never reads the live Annotator 2 tab, so clearing either side (or hand-
+  editing a remark) cannot stop it. If the live value matches neither
+  original, `Z` writes Annotator 2's first (a non-empty hand edit is kept and
+  shown in the badge). It refuses rather than write an empty Annotator 2
+  score, and the pairs are discarded on a row change.
 - **Lazy-load self-correction (Module 3).** The platform sometimes finishes
-  switching QC tabs before the current row's Remarks/Rewrite text has
-  actually loaded, so the first read can capture the *previous* row's
-  leftover text. A short poller re-scrapes automatically for ~2.5s — but
-  only while you're not actively typing in that field.
-- **Stateless per-line "＋ Add" (Module 3 Remarks).** The button never reads
-  what's in the Remarks box and never tracks what it's already added — it
-  only ever appends. Consequences, all intended: clicking the same row
-  twice appends it twice, and "undo" is the textarea's own native undo.
+  switching QC tabs before the current row's remark text has actually loaded,
+  so the first read can capture empty or the *previous* row's leftover text.
+  For about 2.5s after a scrape a short poller compares Annotator 1's live
+  remarks with the snapshot and re-scrapes (at most twice). It stops the
+  moment you type, flip, or relabel, so it can only ever correct a pair you
+  have not touched. It cannot see late text on Annotator 2's tab.
 - **Verdict = "1" / "3" (Module 3).** Driven onto the platform's real
   `.right-btn` (Annotator 1 → "1") / `.wrong-btn` (Annotator 2 → "3") inside
   `.quality-container` — same control as the platform's own "correct/wrong"
@@ -388,8 +389,61 @@ real annotation row:
   clicked selector, so this should work but is unconfirmed.
 - **Live-updating text** in the first 80 characters of the source/Trans1 block
   would be read as a row change and snap the Remark target back.
+- **`v1.5.3` quoting.** That the Note body really sits inside
+  `[data-module-key="NoteTrans"] .ant-spin-container` on the live page, and
+  that no stray control text (an expand/collapse link) is selectable inside
+  it; and that `Q` accepts a triple-click on a whole translation.
+- **`v1.5.3` remark gate.** That a remark written by the composer survives
+  NOVA's re-render, and that Escape during IME composition does not blur.
+- **`v1.5.3` QC.** That a remark written by `Z` persists after NOVA saves,
+  that QC now re-scrapes on each row change (it never did before, because it
+  read a module that no longer exists), that late-loading remark text on
+  Annotator 2's tab is not recorded empty, and how the Score-and-Remarks
+  outline looks against the live layout.
 
 ## Version history
+
+### `v1.5.3` — Remark gate, Escape unfocus, quote rework, QC Z swaps Score and Remark
+
+Annotation stage (Remark Composer):
+
+- **Remark gate.** Label Check and Submit Check now also hold Enter when a
+  populated, fully labelled translation scored below 3 Points has an empty or
+  whitespace-only Remarks box (read live from that translation's own box,
+  including `Trans 2 Remarks`). No Space is sent on a block. Check Off is
+  unchanged. The blocked toast, silenced since `c9c5444`, is back and names
+  each translation and whether its label or its remark is missing.
+- **Escape unfocuses.** With Remark Options open, the first `Esc` takes focus
+  off the edit box or a translation's Remarks box without closing, clearing,
+  or retargeting; the next `Esc` closes as before.
+- **Quotes carry no source.** `Q` now writes `"selected text"`; the
+  `Trans N` prefix is gone, and the left-hand Note field can be quoted. The
+  whole selection must lie inside one translation's text or the Note body, so
+  select-all, a selection across two translations, Note plus a translation,
+  Context-EN, or a title plus its text is refused and writes nothing. A
+  trailing `"…"` still counts as a quote when the next chip's separator is
+  chosen, including old `Trans N "…"` remarks.
+
+QC Compare:
+
+- **`Z` swaps Score and Remark together** with a preserved pair per
+  translation (both annotators' originals for the row), so it keeps
+  flip-flopping between them even after you clear or edit either side.
+  Every `Z` that writes advances to the next translation.
+- **Selector** outlines the translation's Score and Remarks box together.
+  Badges compare the whole score-plus-remark unit and show Annotator 2's
+  remark; a remark-only difference now counts as still to reconcile.
+- **3 Points warning** is now per translation: a translation scored 3 Points
+  that holds its own remark is flagged as you type or flip.
+- **Removed** the Rewrite and whole-row Remarks code (both fields are gone
+  from NOVA): the Remarks "+ Add" lines, the compare boxes, and the highlight
+  overlay.
+- **Fixed** QC row-change detection: it read a module that no longer exists,
+  so a new row was never re-scraped.
+
+Tests: 181 Playwright tests, including a new reduced QC page fixture
+(`tests/fixtures/quality_compare.html`) with a two-tab simulator. Live NOVA
+checks are listed under "Known unverified".
 
 ### `v1.5.2` — Click-to-select Remarks and live direct editing
 

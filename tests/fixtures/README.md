@@ -29,8 +29,12 @@ the structural details below as unverified against a fresh dump.
   translation) and `Note` (key `NoteTrans`). Note's shape follows
   `user 1 double blind html.txt`: `.module-title .title-text` = `Note`, then
   `.ant-spin-container` holding an `h1` heading and
-  `.refactor-content .content-box #content`. Note text is not in
-  `.preview-content`. Because every module's row signature reads Note first,
+  `.refactor-content .content-box #content`, followed by the page's own
+  chrome that must not be quotable: the `.expand-btn` Collapse control inside
+  `.refactor-content` and a sibling `.image-list-container` (picture count,
+  size buttons, cover tag, page digit). Note text is not in
+  `.preview-content`. A header `textarea#form_item_remark` (the page's `备注`
+  bar, outside every module) is also present. Because every module's row signature reads Note first,
   tests that simulate a row change must change Note's `#content` text too.
 
 ## What was redacted or replaced

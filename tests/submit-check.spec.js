@@ -191,6 +191,20 @@ test.describe('empty-row auto-advance (Submit Check)', () => {
     expect(f.spaceEvents).toEqual([]);
   });
 
+  test('translations that render before the timer fires cancel the auto Enter: nothing is dispatched', async ({ page }) => {
+    const texts = await page.evaluate(() => Array.from(document.querySelectorAll('.preview-content')).map((el) => el.textContent));
+    await toEmptyRow(page);
+    await page.waitForTimeout(500); // past the 250ms settle, so the 1s timer is armed
+    await page.evaluate((saved) => {
+      document.querySelectorAll('.preview-content').forEach((el, i) => { el.textContent = saved[i]; });
+    }, texts); // the translations arrive; the Note (row signature) does not change again
+    await page.waitForTimeout(1800);
+    expect(await enterPrevented(page)).toEqual([]);
+    const f = await fixture(page);
+    expect(f.submitCount).toBe(0);
+    expect(f.spaceEvents).toEqual([]);
+  });
+
   test('leaving Submit mode cancels the pending timer: no Enter is dispatched at all', async ({ page }) => {
     await toEmptyRow(page);
     await page.waitForTimeout(500);
@@ -278,16 +292,15 @@ test.describe('remark gate', () => {
     });
   }
 
-  test('the blocked toast names each translation and whether its label or remark is missing', async ({ page }) => {
-    await cycleTo(page, 'submit');
-    await setScores(page, { ...ALL_THREE, 2: '2 Points / Grammar', 4: '2 Points' });
-    await page.keyboard.press('Enter');
-    const toast = page.locator('#tl-toast');
-    await expect(toast).toContainText('Trans2');
-    await expect(toast).toContainText('remark');
-    await expect(toast).toContainText('Trans4');
-    await expect(toast).toContainText('label');
-  });
+  // Trans2 is fully labelled but has no remark; Trans4 is a bare 2 Points. Each reason must sit with its own translation.
+  for (const mode of ['label', 'submit']) {
+    test(`the ${mode} mode toast pairs each translation with its own missing label or remark`, async ({ page }) => {
+      await cycleTo(page, mode);
+      await setScores(page, { ...ALL_THREE, 2: '2 Points / Grammar', 4: '2 Points' });
+      await page.keyboard.press('Enter');
+      await expect(page.locator('#tl-toast')).toContainText('Trans4 needs a complete label; Trans2 needs a remark.');
+    });
+  }
 });
 
 test.describe('dispatchNativeSpace target', () => {

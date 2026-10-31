@@ -470,41 +470,60 @@
     // itself. With no selection, Q puts the caret in the composer box.
     //
     // A selection is only quoted when ALL of its text lies inside exactly one
-    // source element: a translation's `.preview-content` or the Note body.
-    // Anything wider (Ctrl-A, two translations, Note plus a translation,
-    // Context-EN, a title plus its text) is refused and writes nothing.
+    // source: a translation's text, or the Note's heading and body. Anything
+    // wider (Ctrl-A, two translations, Note plus a translation, Context-EN, a
+    // title plus its text, the Note's Collapse control or picture list) is
+    // refused and writes nothing.
     // Known gaps: text containing `"` is not escaped, pressing Q twice on the
     // same selection appends twice, and multi-line selections keep their
     // internal newlines.
-    function quoteRoots() {
-      const roots = [];
+    //
+    // The quotable sources, each a group of elements that count as one source: a translation is its
+    // `.preview-content`; the Note is its heading plus its body text (`.content-box`). The Note module also holds
+    // a Collapse/Expand control, a picture list, and other page chrome, none of which is quotable.
+    function quoteSources() {
+      const items = []; // { el, id }
       document.querySelectorAll('[data-module-name]').forEach((mod) => {
-        if (Utils.transNumFromModuleName(mod) === null) return;
-        mod.querySelectorAll('.preview-content').forEach((el) => roots.push(el));
+        const n = Utils.transNumFromModuleName(mod);
+        if (n === null) return;
+        mod.querySelectorAll('.preview-content').forEach((el) => items.push({ el, id: `t${n}` }));
       });
-      document.querySelectorAll('[data-module-key="NoteTrans"] .ant-spin-container').forEach((el) => roots.push(el));
-      const unique = Array.from(new Set(roots));
-      return unique.filter((r) => !unique.some((o) => o !== r && o.contains(r))); // nested wrappers count once
+      document.querySelectorAll('[data-module-key="NoteTrans"]').forEach((mod) => {
+        mod.querySelectorAll('h1, .refactor-content .content-box').forEach((el) => items.push({ el, id: 'note' }));
+      });
+      const els = items.map((it) => it.el);
+      const groups = new Map();
+      items.forEach((it, i) => {
+        if (els.indexOf(it.el) !== i) return; // nested wrappers repeat the same element
+        if (els.some((o) => o !== it.el && o.contains(it.el))) return;
+        if (!groups.has(it.id)) groups.set(it.id, []);
+        groups.get(it.id).push(it.el);
+      });
+      return Array.from(groups.values());
     }
 
-    const quoteNorm = (s) => Utils.stripAnnotationTags(String(s)).replace(/\s+/g, ' ').trim();
+    // Compared without any whitespace: the page renders blocks with no separating spaces while the selection text
+    // may add some, and only the words matter here.
+    const quoteKey = (s) => Utils.stripAnnotationTags(String(s)).replace(/\s+/g, '');
 
-    // True when the range's text belongs to one quotable root and nothing else.
-    // Each intersecting root is measured through a copy of the range clamped to
-    // that root, so a selection that ends in blank space after a root (a
-    // boundary on the root's parent) still counts as inside it.
+    // True when the range's text belongs to one quotable source and nothing else. Each source is measured through
+    // copies of the range clamped to its elements, so a selection that ends in blank space after a source (a
+    // boundary on the source's parent) still counts as inside it.
     function isSingleSourceSelection(range) {
       const inside = [];
-      for (const root of quoteRoots()) {
-        if (!range.intersectsNode(root)) continue;
-        const clamped = document.createRange();
-        clamped.selectNodeContents(root);
-        if (clamped.compareBoundaryPoints(Range.START_TO_START, range) < 0) clamped.setStart(range.startContainer, range.startOffset);
-        if (clamped.compareBoundaryPoints(Range.END_TO_END, range) > 0) clamped.setEnd(range.endContainer, range.endOffset);
-        const text = quoteNorm(clamped.toString());
-        if (text) inside.push(text);
+      for (const group of quoteSources()) {
+        let text = '';
+        for (const root of group) {
+          if (!range.intersectsNode(root)) continue;
+          const clamped = document.createRange();
+          clamped.selectNodeContents(root);
+          if (clamped.compareBoundaryPoints(Range.START_TO_START, range) < 0) clamped.setStart(range.startContainer, range.startOffset);
+          if (clamped.compareBoundaryPoints(Range.END_TO_END, range) > 0) clamped.setEnd(range.endContainer, range.endOffset);
+          text += clamped.toString();
+        }
+        if (quoteKey(text)) inside.push(text);
       }
-      return inside.length === 1 && inside[0] === quoteNorm(range.toString());
+      return inside.length === 1 && quoteKey(inside[0]) === quoteKey(range.toString());
     }
 
     function tryQuoteSelection() {
@@ -987,7 +1006,7 @@
       }
 
       if (e.key === 'Escape') {
-        if (!active) return;
+        if (!active || e.isComposing) return; // Escape during IME composition belongs to the IME
         e.preventDefault();
         // A focused remark box is un-focused first; the next Escape closes.
         if (inRemarkBox(document.activeElement)) document.activeElement.blur();
@@ -1068,6 +1087,7 @@
           clearTimeout(autoAdvanceTimer);
           if (!scoringShortcuts.checkCompleteness().scoreable.length && CHECK_MODES[checkModeIdx] === 'submit') {
             autoAdvanceTimer = setTimeout(() => {
+              if (scoringShortcuts.checkCompleteness().scoreable.length) return; // translations rendered meanwhile: a real row
               document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
             }, 1000);
           }

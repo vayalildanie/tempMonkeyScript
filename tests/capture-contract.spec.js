@@ -8,6 +8,7 @@ const toUrl = (p) => 'file://' + p.replace(/\\/g, '/');
 
 const targets = [
   { name: 'reduced fixture (tests/fixtures/annotation.html)', file: path.join(__dirname, 'fixtures/annotation.html') },
+  { name: 'reduced QC fixture (tests/fixtures/quality_compare.html)', file: path.join(__dirname, 'fixtures/quality_compare.html') },
 ];
 
 // Local captures made with `npm run capture`. They are gitignored, so a fresh
