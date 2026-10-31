@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.3`, on `main`.** It is covered by an automated
+> **Current version: `v1.5.4`, on `main`.** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -105,7 +105,7 @@ by `tests/fixtures/quality_compare.html`, a reduced QC page with a two-tab
 simulator (its file name must start with `quality_` so the module starts).
 
 The specs are grouped by purpose (`scoring`, `submit-check`,
-`remark-target-selection`, `remark-writes`, `remark-mouse`, `qc-navigation`,
+`remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
 `qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`,
 `capture-contract`) and tagged `@logic` (behavior), `@contract` (selector and
 fixture contracts) or `@layout` (viewport and legend). `npx playwright test
@@ -412,6 +412,26 @@ real annotation row:
   outline looks against the live layout.
 
 ## Version history
+
+### `v1.5.4` — Remark Options window no longer opens cut off or off-screen
+
+- **Saved position and size are fitted to the screen.** The window remembers
+  where you put it and how big you made it, and reopened exactly there even
+  when the browser window had since become smaller (another monitor, another
+  zoom level, DevTools docked), so it could open partly or entirely
+  off-screen. It is now fitted into the visible area when it opens and again
+  when the browser window is resized. Only the live window is adjusted; the
+  remembered layout is kept, so going back to the bigger screen restores it.
+- **A window removed by the page comes back.** If the page removed the window
+  while it was open, the re-created one stayed hidden (while the composer
+  still took over the keyboard). It is now shown again with its size,
+  position, target, and text.
+- Quick reset if it ever misbehaves: in the browser console run
+  `localStorage.removeItem('trans-tool:nova-remark-pos-v1');
+  localStorage.removeItem('trans-tool:nova-remark-size-v1')`, then press `O`.
+- Tests: 7 new (`tests/remark-window.spec.js`), 199 in 13 files (one more per
+  local capture). Whether the real NOVA page ever removes the window is not
+  known; the re-create handling was already in the code.
 
 ### `v1.5.3` — Remark gate, Escape unfocus, quote rework, QC Z swaps Score and Remark
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.5.3
+// @version      1.5.4
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,14 @@
 // ==/UserScript==
 
 /*
+ * v1.5.4 fixes the Remark Options window opening cut off or off-screen. A
+ * remembered position or size (for example saved on a larger screen, at
+ * another zoom level, or with DevTools docked) is now fitted into the visible
+ * window when it opens and when the browser window is resized, without
+ * overwriting what was saved. If the page removes the window while it is open,
+ * the re-created one is shown again with its size, position, target, and text
+ * instead of staying hidden while the composer still has the keyboard.
+ *
  * v1.5.3, annotation stage (Remark Composer): Label Check and Submit Check
  * also hold Enter when a populated, fully labelled translation scored below
  * 3 Points has an empty Remarks box, and the blocked toast is back, naming each
@@ -173,7 +181,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.5.3';
+  TL.SCRIPT_VERSION = 'v1.5.4';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

@@ -142,6 +142,46 @@
       return false;
     }
 
+    // Keep the window inside what the screen shows right now. A remembered
+    // position or size can come from a bigger screen, another zoom level, or a
+    // docked DevTools, and would otherwise open cut off or entirely off-screen.
+    // Only the live element is adjusted; the saved values are left alone, so
+    // going back to the bigger screen restores the old layout.
+    function fitPopover(p) {
+      const pad = 8;
+      const r = p.getBoundingClientRect();
+      const w = Math.min(r.width, window.innerWidth - 2 * pad);
+      const h = Math.min(r.height, window.innerHeight - 2 * pad);
+      if (w < r.width) p.style.width = Math.round(w) + 'px';
+      if (h < r.height) p.style.height = Math.round(h) + 'px';
+      const left = Math.max(pad, Math.min(window.innerWidth - w - pad, r.left));
+      const top = Math.max(pad, Math.min(window.innerHeight - h - pad, r.top));
+      if (left !== r.left) p.style.left = Math.round(left) + 'px';
+      if (top !== r.top) p.style.top = Math.round(top) + 'px';
+    }
+
+    // Size, position, and show the window. Used when it opens and again if the
+    // page removes it while it is open and it has to be re-created.
+    function showPopover() {
+      if (!popover) return;
+      // Size and position persist across reloads (v1.4.0) — fall back to
+      // the fixed defaults / mouse-follow behavior only on a first-ever
+      // open, before anything's been saved.
+      if (!applySavedSize(popover)) {
+        popover.style.width = POPOVER_DEFAULT_W + 'px';
+        popover.style.height = POPOVER_DEFAULT_H + 'px';
+      }
+      if (applySavedPos(popover)) {
+        pinned = true; // a remembered position means "stay put", not "follow the mouse"
+        popover.style.display = 'flex';
+      } else {
+        popover.style.display = 'flex';
+        openPopover(lastMouseX, lastMouseY);
+      }
+      fitPopover(popover);
+      syncOverlayGeometry();
+    }
+
     function loadStoredChipConfig() {
       try {
         const raw = localStorage.getItem(RMD_STORAGE_KEY);
@@ -559,23 +599,7 @@
       setHint('');
       resolveInitialTarget();
       updateLikely();
-      if (popover) {
-        // Size and position persist across reloads (v1.4.0) — fall back to
-        // the fixed defaults / mouse-follow behavior only on a first-ever
-        // open, before anything's been saved.
-        if (!applySavedSize(popover)) {
-          popover.style.width = POPOVER_DEFAULT_W + 'px';
-          popover.style.height = POPOVER_DEFAULT_H + 'px';
-        }
-        if (applySavedPos(popover)) {
-          pinned = true; // a remembered position means "stay put", not "follow the mouse"
-          popover.style.display = 'flex';
-        } else {
-          popover.style.display = 'flex';
-          openPopover(lastMouseX, lastMouseY);
-        }
-      }
-      syncOverlayGeometry();
+      showPopover();
     }
     function exit() {
       active = false;
@@ -1065,7 +1089,11 @@
     function onMutate() {
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
-        if (!document.getElementById('rmd-popover')) injectPopover(); // re-inject if the platform wiped it
+        if (!document.getElementById('rmd-popover')) { // re-inject if the platform wiped it
+          injectPopover();
+          // The new element starts hidden and empty; if the window was open, bring it back as it was.
+          if (active) { showPopover(); loadedTarget = null; loadProxy(); }
+        }
         injectStyle();
         const sig = getRowSig();
         if (sig !== lastRowSig) {
@@ -1117,6 +1145,7 @@
       document.addEventListener('input', onNovaRemarksInput, true);
       document.addEventListener('click', onNovaRemarksClick, true);
       document.addEventListener('mousemove', (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
+      window.addEventListener('resize', () => { if (active && popover) fitPopover(popover); }); // a smaller window must not strand the open one
       const mo = new MutationObserver(onMutate);
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });
       rlog('Started');
