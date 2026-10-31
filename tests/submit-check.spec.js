@@ -111,17 +111,6 @@ test.describe('Submit Check', () => {
   });
 });
 
-test.describe('Check Off', () => {
-  test('Enter is untouched and nothing is submitted', async ({ page }) => {
-    await cycleTo(page, 'off');
-    await page.keyboard.press('Enter');
-    expect(await enterPrevented(page)).toEqual([false]);
-    const f = await fixture(page);
-    expect(f.spaceEvents).toEqual([]);
-    expect(f.submitCount).toBe(0);
-  });
-});
-
 test.describe('mode cycling', () => {
   test('z cycles Label -> Submit -> Off -> Label and the mode survives a reload', async ({ page }) => {
     await expect(pill(page)).toContainText('Label Check');

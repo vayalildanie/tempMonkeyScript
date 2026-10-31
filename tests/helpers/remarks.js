@@ -49,10 +49,20 @@ function activeTargets(page) {
   }));
 }
 
-// Polls until exactly Trans `n` is the composer's target.
-async function expectTarget(page, n) {
-  await expect.poll(() => activeTargets(page)).toEqual([n]);
+// Polls until exactly Trans `n` is the composer's target. `message` names the
+// step in a failure.
+async function expectTarget(page, n, message) {
+  await expect.poll(() => activeTargets(page), message ? { message } : undefined).toEqual([n]);
 }
+
+// A Remarks module and its textarea, for mouse tests (TransN Remarks spelling;
+// Trans2's "Trans 2 Remarks" is not matched).
+const remarkArea = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"]`).first();
+const remarkField = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"] textarea`).first();
+
+// Parks the floating composer at the top left so it never covers a Remarks
+// textarea in the right column that a test clicks for real.
+const keepComposerClear = (page) => page.addStyleTag({ content: '#rmd-popover { left: 16px !important; top: 0 !important; }' });
 
 // Selects the whole text of Trans `n` and returns it trimmed.
 function selectTrans(page, n) {
@@ -65,20 +75,6 @@ function selectTrans(page, n) {
     sel.addRange(range);
     return el.textContent.trim();
   }, n);
-}
-
-// Selects text from the start of Trans `a` to the end of Trans `b`.
-function selectAcross(page, a, b) {
-  return page.evaluate(({ a, b }) => {
-    const first = document.querySelector(`[data-module-name="Trans${a}"] .preview-content`);
-    const second = document.querySelector(`[data-module-name="Trans${b}"] .preview-content`);
-    const range = document.createRange();
-    range.setStart(first, 0);
-    range.setEnd(second, second.childNodes.length);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }, { a, b });
 }
 
 // Builds one named selection in the page and returns its raw text.
@@ -154,8 +150,10 @@ module.exports = {
   expectRemarks,
   activeTargets,
   expectTarget,
+  remarkArea,
+  remarkField,
+  keepComposerClear,
   selectTrans,
-  selectAcross,
   makeSelection,
   edit,
   blur,

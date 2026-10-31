@@ -91,22 +91,6 @@ test.describe('smoke', () => {
 test.describe('arrows', () => {
   test.beforeEach(async ({ page }) => { await bootQC(page); });
 
-  test('moves the selection down and skips the empty Trans3 when ArrowDown is pressed', async ({ page }) => {
-    await page.keyboard.press('ArrowDown');
-    await expectSelected(page, 2);
-    await page.keyboard.press('ArrowDown');
-    await expectSelected(page, 4);
-    await page.keyboard.press('ArrowUp');
-    await expectSelected(page, 2);
-  });
-
-  test('toggles between columns when ArrowLeft or ArrowRight is pressed', async ({ page }) => {
-    await page.keyboard.press('ArrowRight');
-    await expectSelected(page, 4);
-    await page.keyboard.press('ArrowLeft');
-    await expectSelected(page, 1);
-  });
-
   test('keeps the selection and an edited score when the tabs make a round trip', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
@@ -122,18 +106,6 @@ test.describe('arrows', () => {
     await clickTab(page, 0);
     await expectScore(page, 4, 'Confusing');
     await expectSelected(page, 4);
-  });
-
-  test('restores the selection outline when the score host is re-rendered', async ({ page }) => {
-    await page.keyboard.press('ArrowDown');
-    await expectSelected(page, 2);
-    await page.evaluate(() => {
-      window.__oldHost = document.querySelector('.qc-active-score');
-      window.__fixture.rerenderScoreHost(2);
-    });
-    await expectSelected(page, 2);
-    expect(await page.evaluate(() => window.__oldHost.isConnected)).toBe(false);
-    await expect(page.locator(`${scoreMod(2)} .qc-badge`)).toHaveCount(1);
   });
 });
 
@@ -271,7 +243,9 @@ test.describe('selector spans Score and Remark', () => {
     };
   });
   // Exactly one outline of each kind on the page, both on translation n.
-  const expectOutlines = (page, n) => expect.poll(() => outlined(page)).toEqual({ score: [n], remark: [n] });
+  // `message` names the step in a failure.
+  const expectOutlines = (page, n, message) => expect.poll(() => outlined(page), message ? { message } : undefined)
+    .toEqual({ score: [n], remark: [n] });
 
   // Document order of the Score control, its badge and the Remarks module.
   const domOrder = (page, n) => page.evaluate((n) => {
@@ -285,17 +259,21 @@ test.describe('selector spans Score and Remark', () => {
 
   test.beforeEach(async ({ page }) => { await bootQC(page); });
 
-  test('outlines the Score and the Remarks of the same translation when it is selected', async ({ page }) => {
-    await expectOutlines(page, 1);
-    await page.keyboard.press('ArrowDown');
-    // Trans2's module is spelled "Trans 2 Remarks", with a space.
-    await expectOutlines(page, 2);
-  });
-
-  test('moves both outlines together when the arrow keys are pressed', async ({ page }) => {
-    for (const [key, n] of [['ArrowDown', 2], ['ArrowDown', 4], ['ArrowUp', 2], ['ArrowRight', 4], ['ArrowLeft', 2]]) {
-      await page.keyboard.press(key);
-      await expectOutlines(page, n);
+  // Steps: [label, key, n]. After each step both outlines are on Trans n, and only there.
+  const arrowSteps = [
+    ['at boot Trans1 is selected', null, 1],
+    ['ArrowRight toggles to the right column', 'ArrowRight', 4],
+    ['ArrowLeft toggles back to the left column', 'ArrowLeft', 1],
+    ['ArrowDown reaches Trans2, whose Remarks is spelled "Trans 2 Remarks"', 'ArrowDown', 2],
+    ['ArrowDown skips the empty Trans3', 'ArrowDown', 4],
+    ['ArrowUp skips back over the empty Trans3', 'ArrowUp', 2],
+    ['ArrowRight returns to the right column\'s last slot', 'ArrowRight', 4],
+    ['ArrowLeft returns to the left column\'s last slot', 'ArrowLeft', 2],
+  ];
+  test('the Score and Remarks outlines move together to each translation the arrow keys select', async ({ page }) => {
+    for (const [label, key, n] of arrowSteps) {
+      if (key) await page.keyboard.press(key);
+      await expectOutlines(page, n, `[${label}] both outlines should be on Trans${n}`);
     }
   });
 
@@ -307,11 +285,16 @@ test.describe('selector spans Score and Remark', () => {
     expect(await domOrder(page, 1)).toEqual(['control', 'badge', 'remarks']);
   });
 
-  test('restores both outlines when the platform replaces the Score host', async ({ page }) => {
+  test('restores both outlines and keeps one badge when the platform replaces the Score host', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectOutlines(page, 2);
-    await page.evaluate(() => window.__fixture.rerenderScoreHost(2));
+    await page.evaluate(() => {
+      window.__oldHost = document.querySelector('.qc-active-score');
+      window.__fixture.rerenderScoreHost(2);
+    });
     await expectOutlines(page, 2);
+    expect(await page.evaluate(() => window.__oldHost.isConnected), 'the old Score host was replaced').toBe(false);
+    await expect(page.locator(`${scoreMod(2)} .qc-badge`)).toHaveCount(1);
   });
 
   test('restores both outlines when the platform replaces the Remarks module', async ({ page }) => {

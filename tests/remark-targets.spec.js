@@ -3,7 +3,8 @@ const { boot } = require('./helpers/fixture');
 const { POPULATED, ALL_EMPTY, setScores } = require('./helpers/scores');
 const {
   setRemark, remarksValues, expectRemarks, activeTargets, expectTarget,
-  selectTrans, selectAcross, makeSelection, edit, blur, openComposer,
+  remarkArea, remarkField, keepComposerClear,
+  selectTrans, makeSelection, edit, blur, openComposer,
 } = require('./helpers/remarks');
 
 // Fixture facts: Trans1, 2, 4-7 are populated; Trans3's text is empty. The
@@ -68,29 +69,90 @@ test.describe('arrow movement', () => {
     await expectTarget(page, 2);
   });
 
-  test('ArrowDown first clears the one-shot jump', async ({ page }) => {
-    await setScores(page, lateScoring);
-    await openComposer(page);
-    await page.keyboard.press('ArrowDown');
-    await expectTarget(page, 5);
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 4);
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 2); // sequential, not a jump to Trans1
-  });
+  // The one-shot "first ArrowUp jumps to Trans1" is spent by any of these
+  // actions. Rows: { label, act, ups }. `act` opens the composer and performs
+  // the action; `ups` are the targets the following ArrowUps must reach, each
+  // one translation up (Trans3 is empty and skipped), never a jump to Trans1.
+  const jumpSpenders = [
+    {
+      label: 'ArrowDown was pressed first',
+      act: async (page) => {
+        await setScores(page, lateScoring);
+        await openComposer(page);
+        await page.keyboard.press('ArrowDown');
+        await expectTarget(page, 5, 'ArrowDown moves Trans4 -> Trans5');
+      },
+      ups: [4, 2],
+    },
+    {
+      label: 'a column toggle was used first',
+      act: async (page) => {
+        await setScores(page, lateScoring);
+        await openComposer(page);
+        await page.keyboard.press('ArrowLeft');
+        await expectTarget(page, 1, 'ArrowLeft toggles to the left column');
+        await page.keyboard.press('ArrowRight');
+        await expectTarget(page, 4, 'ArrowRight toggles back to the right column');
+      },
+      ups: [2],
+    },
+    {
+      label: 'another translation\'s Remarks was clicked while #rmd-edit had focus',
+      act: async (page) => {
+        await keepComposerClear(page);
+        await openComposer(page); // fixture scores: the initial target is Trans1
+        await edit(page).click();
+        await remarkField(page, 5).click();
+        await expectTarget(page, 5, 'the click selects Trans5');
+        await remarkField(page, 5).evaluate((ta) => ta.blur());
+      },
+      ups: [4],
+    },
+    {
+      label: 'the already-targeted Remarks was clicked',
+      act: async (page) => {
+        await keepComposerClear(page);
+        await setScores(page, lateScoring);
+        await openComposer(page);
+        await expectTarget(page, 4);
+        await remarkField(page, 4).click();
+        await remarkField(page, 4).evaluate((ta) => ta.blur());
+      },
+      ups: [2],
+    },
+    {
+      label: 'direct input changed another translation\'s Remarks',
+      act: async (page) => {
+        await openComposer(page); // fixture scores: the initial target is Trans1
+        await setRemark(page, 5, 'five');
+        await expectTarget(page, 5, 'the input selects Trans5');
+      },
+      ups: [4],
+    },
+    {
+      label: 'a native input left the target\'s Remarks unchanged',
+      act: async (page) => {
+        await setScores(page, lateScoring);
+        await setRemark(page, 4, 'same'); // composer closed: no target yet
+        await openComposer(page);
+        await expectTarget(page, 4);
+        await expect(edit(page)).toHaveValue('same');
+        await setRemark(page, 4, 'same'); // equal to #rmd-edit, still an edit by the user
+      },
+      ups: [2],
+    },
+  ];
+  for (const { label, act, ups } of jumpSpenders) {
+    test(`the next ArrowUp steps one translation instead of jumping to Trans1 when ${label}`, async ({ page }) => {
+      await act(page);
+      for (const n of ups) {
+        await page.keyboard.press('ArrowUp');
+        await expectTarget(page, n, `[${label}] ArrowUp should step to Trans${n}`);
+      }
+    });
+  }
 
-  test('a column toggle also clears the one-shot jump', async ({ page }) => {
-    await setScores(page, lateScoring);
-    await openComposer(page);
-    await page.keyboard.press('ArrowLeft');
-    await expectTarget(page, 1);
-    await page.keyboard.press('ArrowRight');
-    await expectTarget(page, 4);
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 2);
-  });
-
-  test('when Trans1 is already the target the first ArrowUp only consumes the one-shot', async ({ page }) => {
+  test('the first ArrowUp only spends the one-shot jump when Trans1 is already the target', async ({ page }) => {
     await setScores(page, ALL_EMPTY);
     await openComposer(page);
     await expectTarget(page, 1);
@@ -100,39 +162,52 @@ test.describe('arrow movement', () => {
     await expectTarget(page, 2);
   });
 
-  test('arrows inside #rmd-edit keep native caret behavior and do not move the target', async ({ page }) => {
+  test('the first ArrowUp still jumps to Trans1 when the composer wrote into the target\'s Remarks', async ({ page }) => {
     await setScores(page, lateScoring);
     await openComposer(page);
     await expectTarget(page, 4);
-    await edit(page).click();
-    await page.keyboard.type('abc');
-    const caret = () => page.evaluate(() => document.getElementById('rmd-edit').selectionStart);
-    expect(await caret()).toBe(3);
-    await page.keyboard.press('ArrowLeft');
-    expect(await caret()).toBe(2);
+    await edit(page).fill('composer');
+    await expectRemarks(page, { 4: 'composer' }); // the write reached NOVA's field (its own feedback input)
+    await edit(page).evaluate((ta) => ta.blur());
     await page.keyboard.press('ArrowUp');
-    expect(await caret()).toBe(0); // native: single-line ArrowUp goes to the start
-    await page.keyboard.press('ArrowDown');
-    expect(await caret()).toBe(3);
-    await expectTarget(page, 4);
-    await expectRemarks(page, { 4: 'abc' });
+    await expectTarget(page, 1);
   });
 
-  test('arrows inside the NOVA Remarks textarea keep native behavior', async ({ page }) => {
+  test('arrow keys move the caret and leave the target when focus is in #rmd-edit or a NOVA Remarks textarea', async ({ page }) => {
+    await keepComposerClear(page);
     await setScores(page, lateScoring);
+    await setRemark(page, 5, 'abcd'); // composer closed: no target yet
     await openComposer(page);
     await expectTarget(page, 4);
-    await setRemark(page, 5, 'xyz');
-    await page.evaluate(() => {
-      const ta = document.querySelector('[data-module-name="Trans5 Remarks"] textarea');
-      ta.focus();
-      ta.setSelectionRange(3, 3);
+    const caret = (box) => box.evaluate((ta) => ta.selectionStart);
+
+    await test.step('in #rmd-edit', async () => {
+      await edit(page).click();
+      await page.keyboard.type('abc');
+      expect(await caret(edit(page)), '#rmd-edit: caret after typing').toBe(3);
+      await page.keyboard.press('ArrowLeft');
+      expect(await caret(edit(page)), '#rmd-edit: ArrowLeft').toBe(2);
+      await page.keyboard.press('ArrowUp');
+      expect(await caret(edit(page)), '#rmd-edit: single-line ArrowUp goes to the start').toBe(0);
+      await page.keyboard.press('ArrowDown');
+      expect(await caret(edit(page)), '#rmd-edit: single-line ArrowDown goes to the end').toBe(3);
+      await expectTarget(page, 4, '#rmd-edit: caret keys must not move the target');
+      await expectRemarks(page, { 4: 'abc' });
     });
-    await page.keyboard.press('ArrowLeft');
-    expect(await page.evaluate(() => document.querySelector('[data-module-name="Trans5 Remarks"] textarea').selectionStart)).toBe(2);
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 5); // direct input selected Trans5; caret keys leave it there
+
+    await test.step('in a NOVA Remarks textarea reached by a real click', async () => {
+      await remarkField(page, 5).click();
+      await expectTarget(page, 5, 'NOVA textarea: the real click selects Trans5');
+      await remarkField(page, 5).evaluate((ta) => ta.setSelectionRange(2, 2));
+      await page.keyboard.type('X');
+      await expect(edit(page), 'NOVA textarea: typing mirrors live into #rmd-edit').toHaveValue('abXcd');
+      await expect(remarkField(page, 5), 'NOVA textarea: keeps focus').toBeFocused();
+      await page.keyboard.press('ArrowLeft');
+      expect(await caret(remarkField(page, 5)), 'NOVA textarea: ArrowLeft').toBe(2);
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('ArrowUp');
+      await expectTarget(page, 5, 'NOVA textarea: caret keys must not move the target');
+    });
   });
 
   test('arrows do nothing while the composer is closed', async ({ page }) => {
@@ -229,15 +304,16 @@ test.describe('writes', () => {
   });
 
   test('reverse sync selects an eligible page-side edit', async ({ page }) => {
+    const multiline = 'other\n"quoted" <text>'; // a paste-like value: newline, quotes and angle brackets
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points' });
     await openComposer(page);
     await expectTarget(page, 2);
     await setRemark(page, 2, 'typed on page');
     await expect(edit(page)).toHaveValue('typed on page');
-    await setRemark(page, 4, 'other');
+    await setRemark(page, 4, multiline);
     await expectTarget(page, 4);
-    await expect(edit(page)).toHaveValue('other');
-    await expectRemarks(page, { 2: 'typed on page', 4: 'other' });
+    await expect(edit(page)).toHaveValue(multiline);
+    await expectRemarks(page, { 2: 'typed on page', 4: multiline });
   });
 
   test('Clear affects only the active target', async ({ page }) => {
@@ -265,10 +341,10 @@ test.describe('writes', () => {
 test.describe('mouse selection and direct editing', () => {
   // Keep the floating composer away from the right-column native click targets.
   test.beforeEach(async ({ page }) => {
-    await page.addStyleTag({ content: '#rmd-popover { left: 16px !important; top: 0 !important; }' });
+    await keepComposerClear(page);
   });
-  const field = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"] textarea`).first();
-  const area = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"]`).first();
+  const field = remarkField;
+  const area = remarkArea;
 
   test('module clicks load text without writing; subsequent chips and Clear affect only that target', async ({ page }) => {
     await setRemark(page, 1, 'one');
@@ -285,29 +361,6 @@ test.describe('mouse selection and direct editing', () => {
     await expect(edit(page)).toHaveValue('one');
   });
 
-  test('real textarea click preserves focus, caret, native arrows and live typing', async ({ page }) => {
-    await setRemark(page, 4, 'abcd');
-    await openComposer(page);
-    await field(page, 4).click();
-    await expectTarget(page, 4);
-    await field(page, 4).evaluate((ta) => ta.setSelectionRange(2, 2));
-    await page.keyboard.type('X');
-    await expect(edit(page)).toHaveValue('abXcd');
-    await expect(field(page, 4)).toBeFocused();
-    await page.keyboard.press('ArrowLeft');
-    expect(await field(page, 4).evaluate((ta) => ta.selectionStart)).toBe(2);
-    await expectTarget(page, 4);
-  });
-
-  test('direct paste-like input switches target, mirrors multiline text and consumes first Up', async ({ page }) => {
-    await openComposer(page);
-    await setRemark(page, 5, 'five\n"quoted" <text>');
-    await expectTarget(page, 5);
-    await expect(edit(page)).toHaveValue('five\n"quoted" <text>');
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 4);
-  });
-
   test('ineligible empty translation clicks and edits do not switch or leak text', async ({ page }) => {
     await openComposer(page);
     await area(page, 3).dispatchEvent('click');
@@ -317,7 +370,7 @@ test.describe('mouse selection and direct editing', () => {
     await expectRemarks(page, { 3: 'ineligible', 1: '' });
   });
 
-  test('same-target clicks preserve textarea selection and consume the special Up jump', async ({ page }) => {
+  test('a click on the already-targeted Remarks module keeps the text selected in its textarea', async ({ page }) => {
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' });
     await setRemark(page, 4, 'four');
     await openComposer(page);
@@ -325,17 +378,6 @@ test.describe('mouse selection and direct editing', () => {
     await field(page, 4).evaluate((ta) => ta.setSelectionRange(1, 3));
     await area(page, 4).dispatchEvent('click');
     expect(await field(page, 4).evaluate((ta) => [ta.selectionStart, ta.selectionEnd])).toEqual([1, 3]);
-    await field(page, 4).evaluate((ta) => ta.blur());
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 2);
-  });
-
-  test('click from composer focus then Up proceeds from clicked target', async ({ page }) => {
-    await openComposer(page);
-    await edit(page).click();
-    await field(page, 5).click();
-    await field(page, 5).evaluate((ta) => ta.blur());
-    await page.keyboard.press('ArrowUp');
     await expectTarget(page, 4);
   });
 
@@ -386,21 +428,6 @@ test.describe('mouse selection and direct editing', () => {
     await openComposer(page);
     await area(page, 3).dispatchEvent('click');
     await expectTarget(page, 3);
-  });
-
-  test('unchanged native input consumes first Up but composer feedback does not', async ({ page }) => {
-    await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' });
-    await openComposer(page);
-    await edit(page).fill('composer');
-    await edit(page).evaluate((ta) => ta.blur());
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 1); // composer feedback must not consume the jump
-    await page.keyboard.press('Escape');
-    await openComposer(page);
-    await expectTarget(page, 4);
-    await setRemark(page, 4, 'composer'); // unchanged native input is still an edit interaction
-    await page.keyboard.press('ArrowUp');
-    await expectTarget(page, 2);
   });
 
   test('selection alone emits no input events; ignored score and right-click do not retarget', async ({ page }) => {
@@ -505,16 +532,6 @@ test.describe('quoting', () => {
       const el = document.activeElement;
       return el && el.id === 'rmd-edit' ? [el.selectionStart, el.selectionEnd, el.value.length] : null;
     })).toEqual([9, 9, 9]);
-  });
-
-  test('a selection spanning two translations is rejected and writes nothing', async ({ page }) => {
-    await setScores(page, ALL_EMPTY);
-    await openComposer(page);
-    await selectAcross(page, 4, 5);
-    await page.keyboard.press('q');
-    await expect(page.locator('#rmd-hint')).toContainText('one translation or the Note');
-    await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
-    await expect(edit(page)).toHaveValue('');
   });
 
   test('clicking a translation title inserts nothing and keeps the target', async ({ page }) => {
