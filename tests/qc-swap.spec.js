@@ -1,12 +1,12 @@
 // QC Compare: Z swaps Score and Remark together, with a preserved pair so Z
 // keeps flip-flopping between the two annotators even after either side is
-// cleared (v1.5.3 plan: B-Z, B-FAIL, B-ADV). Helpers are duplicated from
-// qc-compare.spec.js on purpose; Task 6 moves them to tests/helpers.
-const { test, expect } = require('@playwright/test');
-const path = require('path');
-const { bootModules } = require('./helpers/boot');
-
-const qcUrl = 'file://' + path.resolve(__dirname, 'fixtures/quality_compare.html').replace(/\\/g, '/');
+// cleared (v1.5.3 plan: B-Z, B-FAIL, B-ADV).
+const { test, expect } = require('./helpers/test');
+const { scoreMod } = require('./helpers/scores');
+const { setRemark } = require('./helpers/remarks');
+const {
+  SCOREABLE, unit, expectUnit, selected, expectSelected, moveSelectionTo, clickTab, bootQC: bootQCWith,
+} = require('./helpers/qc');
 
 // Trans1: both halves differ. Trans2: score only. Trans4: remark only.
 // Trans5: Annotator 2 has no score. Trans6: identical. Trans7: score only, last translation.
@@ -30,69 +30,13 @@ const DATA = {
 };
 const A = (n) => DATA.a1[n];
 const B = (n) => DATA.a2[n];
-const SCOREABLE = [1, 2, 4, 5, 6, 7];
 
-const scoreMod = (n) => `[data-module-name="Trans${n} Score"]`;
 const badge = (page, n) => page.locator(`${scoreMod(n)} .qc-badge`);
-
-const unit = (page, n) => page.evaluate((n) => {
-  const sm = document.querySelector(`[data-module-name="Trans${n} Score"]`);
-  const item = sm && sm.querySelector('.ant-select-selection-item');
-  const rm = Array.from(document.querySelectorAll('[data-module-name]'))
-    .find((m) => new RegExp(`^Trans ?${n} Remarks$`).test(m.getAttribute('data-module-name')));
-  const ta = rm && rm.querySelector('textarea');
-  return { score: item ? item.textContent.trim() : '', remark: ta ? ta.value : '' };
-}, n);
-async function expectUnit(page, n, expected) {
-  await expect.poll(() => unit(page, n)).toEqual({ score: expected.score, remark: expected.remark });
-}
 const allRemarks = (page) => Promise.all(SCOREABLE.map((n) => unit(page, n).then((u) => u.remark)));
-
-// A remark edit as NOVA's own textarea delivers it (native setter; input event unless a lazy load).
-const setRemark = (page, n, text, { input = true } = {}) => page.evaluate(({ n, text, input }) => {
-  const rm = Array.from(document.querySelectorAll('[data-module-name]'))
-    .find((m) => new RegExp(`^Trans ?${n} Remarks$`).test(m.getAttribute('data-module-name')));
-  const ta = rm.querySelector('textarea');
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, text);
-  if (input) ta.dispatchEvent(new Event('input', { bubbles: true }));
-}, { n, text, input });
-
-const selected = (page) => page.evaluate(() => Array.from(document.querySelectorAll('.qc-active-score')).map((el) => {
-  const mod = el.closest('[data-module-name$=" Score"]');
-  const m = /^Trans ?(\d+) Score$/.exec(mod ? mod.getAttribute('data-module-name') : '');
-  return m ? parseInt(m[1], 10) : null;
-}));
-async function expectSelected(page, n) { await expect.poll(() => selected(page)).toEqual([n]); }
-const activeTab = (page) => page.evaluate(() => Array.from(document.querySelectorAll('.tabs-group .tab'))
-  .findIndex((t) => t.classList.contains('active')));
 const summary = (page) => page.locator('#qc-summary').innerText();
+const bootQC = (page, data = DATA) => bootQCWith(page, data);
 
-async function bootQC(page, data = DATA) {
-  await page.goto(qcUrl);
-  await page.evaluate((d) => window.__fixture.seedQC(d), data);
-  await bootModules(page);
-  await expect(page.locator('.qc-badge')).toHaveCount(SCOREABLE.length);
-  await expectSelected(page, 1);
-}
-async function selectTrans(page, n) {
-  for (let i = 0; i < 8 && (await selected(page))[0] !== n; i++) await page.keyboard.press('ArrowDown');
-  await expectSelected(page, n);
-}
-async function clickTab(page, i) {
-  await page.locator('.tabs-group .tab').nth(i).click();
-  await expect.poll(() => activeTab(page)).toBe(i);
-}
-
-let pageErrors;
-test.beforeEach(({ page }) => {
-  pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push(String(e)));
-});
-test.afterEach(() => {
-  expect(pageErrors).toEqual([]);
-});
-
-test.describe('Z swaps Score and Remark', () => {
+test.describe('Z swaps Score and Remark', { tag: '@logic' }, () => {
   const kinds = [
     ['both halves differ', 1],
     ['only the score differs', 2],
@@ -101,7 +45,7 @@ test.describe('Z swaps Score and Remark', () => {
   for (const [label, n] of kinds) {
     test(`writes Annotator 2's value and shows the swapped badge when ${label}`, async ({ page }) => {
       await bootQC(page);
-      await selectTrans(page, n);
+      await moveSelectionTo(page, n);
       await page.keyboard.press('z');
       await expectUnit(page, n, B(n));
       await expect(badge(page, n)).toHaveClass(/qc-adopted/);
@@ -134,14 +78,9 @@ test.describe('Z swaps Score and Remark', () => {
     await expect(badge(page, 4)).toContainText('a2 four');
     await expect(badge(page, 2)).not.toContainText('shared'); // equal remarks: no remark line
   });
-
-  test('counts a remark-only difference as still to reconcile', async ({ page }) => {
-    await bootQC(page);
-    await expect.poll(() => summary(page)).toContain('5 still to reconcile: Trans 1, 2, 4, 5, 7');
-  });
 });
 
-test.describe('failsafe: the preserved pair survives clears and edits', () => {
+test.describe('failsafe: the preserved pair survives clears and edits', { tag: '@logic' }, () => {
   // Annotator 1's Trans2 is ('2 Points / Fluency', 'shared'); Annotator 2's is ('3 Points', 'shared').
   const clears = [
     ['the remark is cleared', async (page) => { await setRemark(page, 2, ''); }],
@@ -155,7 +94,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
   for (const [label, clear] of clears) {
     test(`restores Annotator 1's original on the second Z when ${label}`, async ({ page }) => {
       await bootQC(page);
-      await selectTrans(page, 2);
+      await moveSelectionTo(page, 2);
       await clear(page);
       await page.keyboard.press('z'); // matches neither side: writes Annotator 2's
       await expectUnit(page, 2, B(2));
@@ -178,7 +117,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
 
   test('records a remark that loads after the scrape as Annotator 1\'s original', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 6);
+    await moveSelectionTo(page, 6);
     await setRemark(page, 6, 'late text', { input: false }); // the platform finishing a load: no input event
     await page.waitForTimeout(2200); // past the bounded verify window
     await page.keyboard.press('z');
@@ -192,7 +131,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
   test('replaces the previous row\'s leftover remark with the real one when the platform corrects it after the scrape', async ({ page }) => {
     const leftover = { ...DATA, a1: { ...DATA.a1, 6: { score: '3 Points', remark: 'leftover from the last row' } } };
     await bootQC(page, leftover);
-    await selectTrans(page, 6);
+    await moveSelectionTo(page, 6);
     await setRemark(page, 6, 'the real remark', { input: false }); // the platform catching up: no input event
     await page.waitForTimeout(2200);
     await page.keyboard.press('z'); // Annotator 1's original is the real remark, so this flips to Annotator 2's (empty)
@@ -206,7 +145,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await bootQC(page);
     await page.keyboard.press('z'); // Trans1: the pair is now in use
     await expectUnit(page, 1, B(1));
-    await selectTrans(page, 4); // originals ('3 Points', '') and ('3 Points', 'a2 four')
+    await moveSelectionTo(page, 4); // originals ('3 Points', '') and ('3 Points', 'a2 four')
     await setRemark(page, 4, 'late text', { input: false });
     await page.waitForTimeout(2200);
     await page.keyboard.press('z'); // live matches neither original: Annotator 2's is written, the text is kept
@@ -224,7 +163,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     });
     await setRemark(page, 6, 'late text', { input: false });
     await page.waitForTimeout(2200);
-    await selectTrans(page, 2);
+    await moveSelectionTo(page, 2);
     await page.keyboard.press('z'); // the live unit now equals Annotator 2's, so Z flips back to the original
     await expectUnit(page, 2, A(2));
   });
@@ -232,7 +171,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
   test('shows the whole hand-edited text on hover when the badge shortens it', async ({ page }) => {
     const long = 'a long hand-edited remark that runs well past forty characters in length';
     await bootQC(page);
-    await selectTrans(page, 4);
+    await moveSelectionTo(page, 4);
     await setRemark(page, 4, long);
     await page.keyboard.press('z');
     await expectUnit(page, 4, B(4));
@@ -241,7 +180,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
 
   test('keeps a hand-edited remark in the badge before Z overwrites it', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 4);
+    await moveSelectionTo(page, 4);
     await setRemark(page, 4, 'typed edit');
     await page.keyboard.press('z');
     await expectUnit(page, 4, B(4));
@@ -268,7 +207,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
   });
 });
 
-test.describe('rows changing under the pairs', () => {
+test.describe('rows changing under the pairs', { tag: '@logic' }, () => {
   const heading = (page, text) => page.evaluate((t) => {
     document.querySelector('[data-module-key="NoteTrans"] h1').textContent = t;
   }, text);
@@ -318,7 +257,7 @@ test.describe('rows changing under the pairs', () => {
   });
 });
 
-test.describe('Z refusals', () => {
+test.describe('Z refusals', { tag: '@logic' }, () => {
   test('writes nothing and does not advance when Annotator 2\'s tab is active', async ({ page }) => {
     await bootQC(page);
     await clickTab(page, 1);
@@ -331,7 +270,7 @@ test.describe('Z refusals', () => {
 
   test('writes nothing and does not advance when Annotator 2 has no score', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 5);
+    await moveSelectionTo(page, 5);
     await page.keyboard.press('z');
     await expect(page.locator('#qc-summary')).toContainText('no score for Trans5');
     await expectUnit(page, 5, A(5));
@@ -340,7 +279,7 @@ test.describe('Z refusals', () => {
 
   test('writes nothing and does not advance when both annotators agree', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 6);
+    await moveSelectionTo(page, 6);
     await page.keyboard.press('z');
     await expect(page.locator('#qc-cursor')).toContainText('Trans6 matches');
     await expectUnit(page, 6, A(6));
@@ -348,10 +287,10 @@ test.describe('Z refusals', () => {
   });
 });
 
-test.describe('Z auto-advance', () => {
+test.describe('Z auto-advance', { tag: '@logic' }, () => {
   test('moves the selection to the next scoreable translation and skips the empty Trans3', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 2);
+    await moveSelectionTo(page, 2);
     await page.keyboard.press('z');
     await expectUnit(page, 2, B(2));
     await expectSelected(page, 4);
@@ -359,14 +298,14 @@ test.describe('Z auto-advance', () => {
 
   test('stays on the last translation when it is the one swapped', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 7);
+    await moveSelectionTo(page, 7);
     await page.keyboard.press('z');
     await expectUnit(page, 7, B(7));
     await expectSelected(page, 7);
   });
 });
 
-test.describe('3 Points must have no remark', () => {
+test.describe('3 Points must have no remark', { tag: '@logic' }, () => {
   const warn = (page) => page.locator('#qc-warn');
 
   test('warns while a 3 Points translation holds a remark and clears when the remark is removed', async ({ page }) => {
@@ -381,7 +320,7 @@ test.describe('3 Points must have no remark', () => {
 
   test('warns after Z writes Annotator 2\'s remark onto a 3 Points score and clears when flipped back', async ({ page }) => {
     await bootQC(page);
-    await selectTrans(page, 4); // Annotator 2: 3 Points with a remark
+    await moveSelectionTo(page, 4); // Annotator 2: 3 Points with a remark
     await page.keyboard.press('z');
     await expectUnit(page, 4, B(4));
     await expect(warn(page)).toContainText('Trans 4');
@@ -398,7 +337,7 @@ test.describe('3 Points must have no remark', () => {
   });
 });
 
-test.describe('Z guards and mouse', () => {
+test.describe('Z guards and mouse', { tag: '@logic' }, () => {
   test('ignores a second Z that arrives while the first write is still in flight', async ({ page }) => {
     await bootQC(page);
     await page.evaluate(() => {
@@ -419,5 +358,12 @@ test.describe('Z guards and mouse', () => {
     await badge(page, 1).locator('.qc-undo').click();
     await expectUnit(page, 1, A(1));
     await expectSelected(page, 1);
+  });
+});
+
+test.describe('reconcile summary', { tag: '@logic' }, () => {
+  test('counts a translation as still to reconcile when only its remarks differ', async ({ page }) => {
+    await bootQC(page);
+    await expect.poll(() => summary(page)).toContain('5 still to reconcile: Trans 1, 2, 4, 5, 7');
   });
 });
