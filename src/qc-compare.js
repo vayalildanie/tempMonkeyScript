@@ -74,10 +74,10 @@
 
     function escapeHtml(s) { return Utils.escapeHtml(s); }
 
-    // Rule: a translation scored exactly "3 Points" should have no remark written about it -> return the Trans numbers
-    // that break it. The whole-row Remarks field is gone, so there is nothing to read until the per-translation rule lands.
+    // Rule: a translation scored 3 Points should have no remark of its own -> return the Trans numbers that break it,
+    // judged from the live fields of the tab being viewed.
     function get3PtRemarkViolations() {
-      return []; // reworked per-translation in B6
+      return scoreableTrans().filter((n) => /^3 Points/.test(readScore(n)) && readRemark(n).trim() !== '');
     }
 
     // ====================================================================
@@ -838,7 +838,7 @@
         <div id="qc-help" style="display:none;">
           <div id="qc-hdr"></div>
           <div class="qc-hint" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;">
-            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Labels</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Score + Remark</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">C</span> Confusing</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">X</span> Clear Label</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">1</span>–<span class="qc-kbd">9</span> Label/Score Selection</span>

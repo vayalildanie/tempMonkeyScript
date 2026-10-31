@@ -123,7 +123,7 @@ test.describe('smoke', () => {
     await bootQC(page);
     const legend = (await page.locator('#qc-help').textContent()).replace(/\s+/g, ' ');
     expect(legend).not.toMatch(/Rewrite|\+ ?Add|＋ ?Add/);
-    expect(legend).toContain('Z Swaps Labels');
+    expect(legend).toContain('Z Swaps Score + Remark');
     expect(legend).toContain('Move Focus (Trans)');
   });
 

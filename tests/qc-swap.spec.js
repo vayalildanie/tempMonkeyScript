@@ -266,6 +266,38 @@ test.describe('Z auto-advance', () => {
   });
 });
 
+test.describe('3 Points must have no remark', () => {
+  const warn = (page) => page.locator('#qc-warn');
+
+  test('warns while a 3 Points translation holds a remark and clears when the remark is removed', async ({ page }) => {
+    await bootQC(page);
+    await expect(warn(page)).toBeHidden();
+    await setRemark(page, 6, 'should not be here');
+    await expect(warn(page)).toBeVisible();
+    await expect(warn(page)).toContainText('Trans 6');
+    await setRemark(page, 6, '   ');
+    await expect(warn(page)).toBeHidden();
+  });
+
+  test('warns after Z writes Annotator 2\'s remark onto a 3 Points score and clears when flipped back', async ({ page }) => {
+    await bootQC(page);
+    await selectTrans(page, 4); // Annotator 2: 3 Points with a remark
+    await page.keyboard.press('z');
+    await expectUnit(page, 4, B(4));
+    await expect(warn(page)).toContainText('Trans 4');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('z');
+    await expectUnit(page, 4, A(4));
+    await expect(warn(page)).toBeHidden();
+  });
+
+  test('does not warn for a remark on a translation scored below 3 Points', async ({ page }) => {
+    await bootQC(page);
+    await setRemark(page, 2, 'explains the 2 Points'); // Trans2 is 2 Points / Fluency
+    await expect(warn(page)).toBeHidden();
+  });
+});
+
 test.describe('Z guards and mouse', () => {
   test('ignores a second Z that arrives while the first write is still in flight', async ({ page }) => {
     await bootQC(page);
