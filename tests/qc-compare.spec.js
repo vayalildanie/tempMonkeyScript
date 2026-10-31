@@ -306,3 +306,80 @@ test.describe('guards', () => {
     await expect(page.locator('.qc-badge.qc-adopted')).toHaveCount(0);
   });
 });
+
+test.describe('selector spans Score and Remark', () => {
+  // Trans numbers carrying each outline, read from the module that owns it.
+  const outlined = (page) => page.evaluate(() => {
+    const numOf = (el, re) => {
+      const mod = el.closest('[data-module-name]');
+      const m = re.exec(mod ? mod.getAttribute('data-module-name') : '');
+      return m ? parseInt(m[1], 10) : null;
+    };
+    return {
+      score: Array.from(document.querySelectorAll('.qc-active-score')).map((el) => numOf(el, /^Trans ?(\d+) Score$/)),
+      remark: Array.from(document.querySelectorAll('.qc-active-remark')).map((el) => numOf(el, /^Trans ?(\d+) Remarks$/)),
+    };
+  });
+  // Exactly one outline of each kind on the page, both on translation n.
+  const expectOutlines = (page, n) => expect.poll(() => outlined(page)).toEqual({ score: [n], remark: [n] });
+
+  // Document order of the Score control, its badge and the Remarks module.
+  const domOrder = (page, n) => page.evaluate((n) => {
+    const score = document.querySelector(`[data-module-name="Trans${n} Score"]`);
+    const remarks = document.querySelector(n === 2 ? '[data-module-name="Trans 2 Remarks"]' : `[data-module-name="Trans${n} Remarks"]`);
+    const parts = { control: score.querySelector('.ant-select'), badge: score.querySelector('.qc-badge'), remarks };
+    return Object.entries(parts)
+      .sort(([, a], [, b]) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map(([name]) => name);
+  }, n);
+
+  test.beforeEach(async ({ page }) => { await bootQC(page); });
+
+  test('outlines the Score and the Remarks of the same translation when it is selected', async ({ page }) => {
+    await expectOutlines(page, 1);
+    await page.keyboard.press('ArrowDown');
+    // Trans2's module is spelled "Trans 2 Remarks", with a space.
+    await expectOutlines(page, 2);
+  });
+
+  test('moves both outlines together when the arrow keys are pressed', async ({ page }) => {
+    for (const [key, n] of [['ArrowDown', 2], ['ArrowDown', 4], ['ArrowUp', 2], ['ArrowRight', 4], ['ArrowLeft', 2]]) {
+      await page.keyboard.press(key);
+      await expectOutlines(page, n);
+    }
+  });
+
+  test('keeps the badge between the Score control and the Remarks when Z swaps a score', async ({ page }) => {
+    expect(await domOrder(page, 1)).toEqual(['control', 'badge', 'remarks']);
+    await page.keyboard.press('z');
+    await expect(page.locator(`${scoreMod(1)} .qc-badge`)).toHaveClass(/qc-adopted/);
+    await expectValue(page, 1, '3 Points');
+    expect(await domOrder(page, 1)).toEqual(['control', 'badge', 'remarks']);
+  });
+
+  test('restores both outlines when the platform replaces the Score host', async ({ page }) => {
+    await page.keyboard.press('ArrowDown');
+    await expectOutlines(page, 2);
+    await page.evaluate(() => window.__fixture.rerenderScoreHost(2));
+    await expectOutlines(page, 2);
+  });
+
+  test('restores both outlines when the platform replaces the Remarks module', async ({ page }) => {
+    await page.keyboard.press('ArrowDown');
+    await expectOutlines(page, 2);
+    await page.evaluate(() => {
+      window.__oldRemarks = document.querySelector('.qc-active-remark');
+      window.__fixture.rerenderRemarkHost(2);
+    });
+    expect(await page.evaluate(() => window.__oldRemarks.isConnected)).toBe(false);
+    await expectOutlines(page, 2);
+    await expect(page.locator(`${remarkMod(2)} textarea`).first()).toHaveValue('Lorem a1 two');
+  });
+
+  test('leaves no outline on the page when no translation is scoreable', async ({ page }) => {
+    await page.evaluate(() => {
+      document.querySelectorAll('[data-module-name^="Trans"] .preview-content').forEach((el) => { el.textContent = ''; });
+    });
+    await expect.poll(() => outlined(page)).toEqual({ score: [], remark: [] });
+  });
+});
