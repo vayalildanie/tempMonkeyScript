@@ -55,7 +55,7 @@ page:
    from scratch, by keyboard or with one click.
 
 It also holds back Enter-to-submit while a populated translation is still
-missing a complete label.
+missing a complete label, or is scored below 3 Points with an empty Remarks box.
 
 ## Install
 
@@ -162,9 +162,9 @@ since the submit check is a page-level guard, not a composer-UI feature)
 | `O` | Open/close the Remark Options window. On open, the Remarks box of the first translation *with text* that isn't scored 3 Points is selected and outlined (empty/unscored counts); Trans1 if every score begins with 3 Points |
 | `↑` / `↓` / `←` / `→` | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). The first `↑` jumps to Trans1 unless an arrow, Remarks click, or direct Remarks edit has already consumed that shortcut |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
-| `Enter` | Run the check now, safely — blocks on an incomplete label per the current check mode; in Submit Check mode, a clean pass also submits (synthesizes Space) |
-| `Q` | Quote the current selection into the highlighted Remarks box as `Trans N "…"`. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box. A selection spanning two translations is refused |
-| `Esc` | Close the window, or close its Settings panel if that's open |
+| `Enter` | Run the check now, safely — blocks on an incomplete label, or on a fully labelled non-3-Points translation whose own Remarks box is empty or only whitespace, per the current check mode (Label Check and Submit Check; Check Off never blocks). The blocked toast names each translation and whether its label or its remark is missing. In Submit Check mode, a clean pass also submits (synthesizes Space) |
+| `Q` | Quote the current selection into the highlighted Remarks box as `"…"` (no `Trans N` or `Note` prefix). Quotable sources are a translation's text and the left-hand Note field; the whole selection must lie inside one of them, so select-all, a selection across two translations, Note plus a translation, Context-EN, or a title plus its text is refused and writes nothing. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box |
+| `Esc` | While a Remarks box (the popover's edit box or a translation's own) has focus: take focus off it, leaving its text, the target, and the window as they are. Otherwise close the window, or close its Settings panel if that's open |
 
 Practical consequence of the focus rule: clicking a chip or pressing `Q`
 moves the cursor into the Remark Options edit box, where arrows move the caret
