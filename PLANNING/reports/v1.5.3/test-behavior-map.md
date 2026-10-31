@@ -232,3 +232,73 @@ How to read the tables:
 5. **QC Q2 (D9):** the two Score-host re-render tests become one.
 6. **B2, B4, B6:** candidates; merge only if the gate table can absorb the exact assertions (decided in T6.3).
 7. **Not merged:** A4 (assertion-level), C26 and D2 (different inputs or subjects), A1/A2 vs A20 (module wiring vs unit).
+
+## Before/After (T6.5)
+
+The tables above keep the pre-T6.4 file names and titles, so they can be read against the baseline. T6.4 renamed
+titles to `<behavior> when <condition>` (every rename is in the T6.4 commit) and moved groups as shown at the end.
+
+| Step | Commit | Tests | Files |
+|---|---|---|---|
+| Baseline (`62aa500`) | | **196** (197 with one local capture) | 9 |
+| T6.1 behavior map | `2e63419` | 196 | 9 |
+| T6.2 shared helpers + page-error guard | `eb44912` | 196 | 9 |
+| T6.3 merges | `c80dc5b` | 190 | 9 |
+| T6.4 split, rename, tag | `3377cee` | **192** (193 with one local capture) | 12 |
+
+Every behavior in sections A to H still has at least one owner. Tags: `@logic` 177, `@contract` 8, `@layout` 7; every
+test has exactly one, and `npx playwright test --grep @logic` runs 177.
+
+### Merges: old tests -> new test
+
+| # | Old tests (baseline titles) | New test (final title) | Count |
+|---|---|---|---|
+| 1 | ArrowDown first clears the one-shot jump; a column toggle also clears the one-shot jump; click from composer focus then Up proceeds from clicked target; direct paste-like input switches target, mirrors multiline text and consumes first Up; same-target clicks preserve textarea selection and consume the special Up jump; unchanged native input consumes first Up but composer feedback does not | `the next ArrowUp steps one translation instead of jumping to Trans1 when ...` [6 rows: ArrowDown, column toggle, click on another Remarks, click on the targeted Remarks, direct input, unchanged native input] + `the first ArrowUp still jumps to Trans1 when the composer wrote into the target's Remarks` + `a click on the already-targeted Remarks module keeps the text selected in its textarea`; the multiline/quote mirror moved into `a page-side edit is mirrored into #rmd-edit and selects its translation when the composer is open` (was "reverse sync") | 6 -> 8 |
+| 2 | arrows inside #rmd-edit keep native caret behavior...; arrows inside the NOVA Remarks textarea keep native behavior; real textarea click preserves focus, caret, native arrows and live typing | `arrow keys move the caret and leave the target when focus is in #rmd-edit or a NOVA Remarks textarea` (one `test.step` per textarea) | 3 -> 1 |
+| 3 | a selection spanning two translations is rejected and writes nothing | removed: the row `Q refuses and writes nothing when the selection is from Trans4 into Trans5` selects the identical range and asserts more | 1 -> 0 |
+| 4 | moves the selection down and skips the empty Trans3...; toggles between columns...; outlines the Score and the Remarks of the same translation...; moves both outlines together... | `the Score and Remarks outlines move together to each translation the arrow keys select` (8 labelled steps) | 4 -> 1 |
+| 5 | restores the selection outline when the score host is re-rendered; restores both outlines when the platform replaces the Score host | `restores both outlines and keeps one badge when the platform replaces the Score host` | 2 -> 1 |
+| 6 | Check Off › Enter is untouched and nothing is submitted | removed: Off returns before the row is read, and the six `remark gate › off mode` rows assert the same three facts | 1 -> 0 |
+| 7 | harness: boots the annotation fixture with an empty Trans3, a closed 2 Points score, and a visible scoring panel | split into three `annotation fixture` tests (not a merge) | 1 -> 3 |
+
+Not merged, because equal coverage could not be proven: B2/B4 (the complete-row checks score by keyboard, which leaves
+scoring-module state the gate table's DOM-set rows never create), D2 (one remark empty vs both non-empty), C26 (Clear
+after a mouse-selected target is one step of a wider test), A4 (one assertion inside a wider test), A1/A2 vs A20
+(module wiring vs the cursor unit).
+
+### Mutation checks (src/ broken temporarily, restored before every commit)
+
+| Merge | What was broken | What failed |
+|---|---|---|
+| 1 | ArrowDown keeps the jump pending | only row "ArrowDown was pressed first" |
+| 1 | ArrowLeft/Right keep the jump pending | only row "a column toggle was used first" |
+| 1 | a click on the already-targeted Remarks keeps the jump | only row "the already-targeted Remarks was clicked" |
+| 1 | a click on another Remarks keeps the jump | only row "another translation's Remarks was clicked while #rmd-edit had focus" |
+| 1 | an unchanged native input keeps the jump | only row "a native input left the target's Remarks unchanged" |
+| 1 | direct input on another translation keeps the jump | only row "direct input changed another translation's Remarks" |
+| 1 | composer feedback spends the jump (`writingTarget` guard dropped) | only "the first ArrowUp still jumps to Trans1 when the composer wrote..." |
+| 1 | the mirror keeps only the first line | only the reverse-sync test |
+| 1 | a same-target click moves the textarea caret to the end | only the kept-selection test |
+| 2 | arrows in `#rmd-edit` move the target | step "in #rmd-edit" (`#rmd-edit: ArrowLeft`) |
+| 2 | arrows in a NOVA Remarks textarea move the target | step "in a NOVA Remarks textarea" (`NOVA textarea: ArrowLeft`) |
+| 3 | a selection over two sources is accepted | row "Trans4 to Trans5" (plus Note+Trans1, Context-EN+Trans1) |
+| 4 | the Remarks outline is never added | step "at boot Trans1 is selected" (plus the two re-render tests) |
+| 4 | QC navigation includes the empty Trans3 | step "ArrowDown skips the empty Trans3" (plus the tab round trip) |
+| 5 | re-renders never repaint the outline after the first paint | the merged Score-host test (plus the Remarks re-render and no-outline tests) |
+| 5 | the badge element is cached per module | only the merged Score-host test (its one-badge assertion came from the removed arrows test) |
+| 6 | Off mode blocks an incomplete row | only `off mode › ignores a missing label with a remark present` |
+
+### Where the groups moved (T6.4)
+
+| Baseline file › group | Now |
+|---|---|
+| remark-targets › initial target, arrow movement, highlight, row change and re-render while open | remark-target-selection.spec.js (same groups) |
+| remark-targets › writes, quoting (incl. separators), escape, likely-remark summary | remark-writes.spec.js (same groups) |
+| remark-targets › mouse selection and direct editing | remark-mouse.spec.js |
+| qc-compare › smoke | qc-navigation.spec.js › starting on a QC page |
+| qc-compare › arrows (tab round trip left after the merge) | qc-navigation.spec.js › tab round trip |
+| qc-compare › selector spans Score and Remark | qc-navigation.spec.js (same group) |
+| qc-compare › score keys, label menu, help toggle, guards | qc-shortcuts.spec.js (same groups) |
+| qc-swap › Z swaps › counts a remark-only difference as still to reconcile | qc-swap.spec.js › reconcile summary |
+| release-smoke (no groups) | release markers / legend content / panel layout (the three viewport tests are one table) |
+| harness (first test) | harness › annotation fixture (three tests, plus Utils.clickEl) |
