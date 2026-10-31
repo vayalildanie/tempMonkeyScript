@@ -50,6 +50,8 @@ Today Escape is handled before the text-entry guard. While Remark Options is ope
 
 ## Quote the left Note field
 
+> **Superseded (2026-10-30):** quotes no longer carry any source reference. Every `Q` quote, from a translation or from Note, is written as `"selected text"` only, and a selection must lie entirely inside one source element (Ctrl-A and cross-element selections are refused). See requirement A-QUOTE and Task 4 in `PLANNING/plans/2026-10-30-v1.5.3-submit-check-remark-gate.md`. The `Note "…"` format below is kept as history.
+
 `Q` currently accepts a selection only when it sits inside exactly one `Trans N` module. The left-hand source field, titled **Note**, is therefore refused. The annotator wants to quote from that field the same way as from a translation.
 
 - Identify the Note module by its visible title `Note`, and by `data-module-key="NoteTrans"` when that attribute is present. Confirm the live module name before implementation; the reduced fixture does not currently include this field.
