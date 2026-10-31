@@ -19,6 +19,7 @@
 //   __fixture.tabLog            -> indices of every tab switch, in order
 //   __fixture.rerenderScoreHost(n) -> replace TransN Score's .cascade-container
 //                                    with a fresh element, as a platform re-render does
+//   __fixture.rerenderRemarkHost(n) -> replace TransN Remarks (the whole module) with fresh nodes
 (function () {
   'use strict';
 
@@ -176,6 +177,22 @@
       fresh.appendChild(child);
     });
     old.replaceWith(fresh);
+    return true;
+  };
+
+  // Replace TransN Remarks with brand-new nodes (same name, same text), the way
+  // a platform re-render does: whatever classes the userscript added are gone
+  // and the textarea is a new element holding the same value.
+  fx.rerenderRemarkHost = function (n) {
+    var name = n === 2 ? 'Trans 2 Remarks' : 'Trans' + n + ' Remarks';
+    var outer = document.querySelector('[data-module-name="' + name + '"]');
+    if (!outer) return false;
+    var fresh = outer.cloneNode(true);
+    fresh.querySelectorAll('.qc-active-remark').forEach(function (el) { el.classList.remove('qc-active-remark'); });
+    var oldArea = outer.querySelector('textarea');
+    var newArea = fresh.querySelector('textarea');
+    if (oldArea && newArea) newArea.value = oldArea.value;
+    outer.replaceWith(fresh);
     return true;
   };
 })();

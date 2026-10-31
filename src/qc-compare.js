@@ -110,6 +110,14 @@
 
     function scoreModule(n) { return document.querySelector(`[data-module-name="Trans${n} Score"]`); }
     function readScore(n) { return Utils.readSelected(scoreModule(n)); } // empty string = not scored
+    // Trans n's Remarks module. The platform nests two wrappers with the same name and spells Trans 2's with a space
+    // ("Trans 2 Remarks"), so match by number, not by string; the first (outermost) match wins.
+    function remarkModule(n) {
+      for (const mod of document.querySelectorAll('[data-module-name]')) {
+        if (Utils.transNumFromModuleName(mod, ' Remarks') === n) return mod;
+      }
+      return null;
+    }
     // Trans numbers on this row that have both a translation and a scoring control (empty translations aren't compared).
     function scoreableTrans() {
       const out = [];
@@ -596,11 +604,19 @@
         // No feedback-loop guard needed here (unlike the innerHTML writes in
         // renderBadges): the observer watches childList/subtree only, with no
         // `attributes: true`, so a classList toggle can't retrigger it.
-        document.querySelectorAll('.qc-active-score').forEach((el) => el.classList.remove('qc-active-score'));
+        //
+        // A translation is selected as a unit: its Score control and its
+        // Remarks box get the same outline. Remarks is outlined on its
+        // block-level `.text-labels` container, not the outer `font` wrapper
+        // (inline, so an outline on it fragments around the line boxes), the
+        // same way Score is outlined on `.cascade-container`.
+        document.querySelectorAll('.qc-active-score, .qc-active-remark').forEach((el) => el.classList.remove('qc-active-score', 'qc-active-remark'));
         if (num === null) return;
         const mod = scoreModule(num);
         if (!mod) return;
         (mod.querySelector('.cascade-container') || mod).classList.add('qc-active-score');
+        const rem = remarkModule(num);
+        if (rem) (rem.querySelector('.text-labels') || rem).classList.add('qc-active-remark');
         // Arrow keys pass scroll:true; a plain repaint from render() doesn't.
         // Without this the highlight walks off the bottom of a long row and
         // the view never follows it.
@@ -693,7 +709,8 @@
            stylesheet, and Module 1 bails out on /quality_ pages, so it is
            never injected here. Same amber-on-pale-yellow look, so the two
            pages read the same way. */
-        .qc-active-score {
+        .qc-active-score,
+        .qc-active-remark {
           outline: 2px solid #f0a500 !important;
           outline-offset: 2px;
           background: rgba(255, 221, 87, .30) !important;
