@@ -120,6 +120,14 @@ test.describe('smoke', () => {
     await expect(page.locator(`${remarkMod(2)} textarea`)).toHaveValue('Lorem a1 two');
   });
 
+  test('lists only the live shortcuts in the legend when the panel is open', async ({ page }) => {
+    await bootQC(page);
+    const legend = (await page.locator('#qc-help').textContent()).replace(/\s+/g, ' ');
+    expect(legend).not.toMatch(/Rewrite|\+ ?Add|＋ ?Add/);
+    expect(legend).toContain('Z Swaps Labels');
+    expect(legend).toContain('Move Focus (Trans)');
+  });
+
   test('never shows the QC panel when the URL is not a /quality_ page', async ({ page }) => {
     await page.goto(annotationUrl);
     await bootModules(page);
