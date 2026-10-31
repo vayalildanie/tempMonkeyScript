@@ -913,23 +913,39 @@
     // Reads completeness through scoringShortcuts.checkCompleteness() rather
     // than any of Scoring Shortcuts' own DOM-reading internals — see this
     // file's header comment.
+    // Translations whose label is complete and whose score is not 3 Points but
+    // whose own Remarks textarea is blank. Read live from the textarea (never
+    // the composer's proxy). A translation with no Remarks textarea at all is
+    // left alone: there is nothing the annotator could fill in.
+    function missingRemarkNumbers(scoreable, incomplete) {
+      return scoreable.filter((n) => {
+        if (incomplete.indexOf(n) !== -1 || /^3 Points/.test(scoreText(n))) return false;
+        const ta = remarkTextarea(n);
+        return !!ta && ta.value.trim() === '';
+      });
+    }
+
     function performCheck(e) {
       const checkMode = CHECK_MODES[checkModeIdx];
       if (checkMode === 'off') return;
-      const { incomplete } = scoringShortcuts.checkCompleteness();
-      if (incomplete.length) {
+      const { scoreable, incomplete } = scoringShortcuts.checkCompleteness();
+      const noRemark = missingRemarkNumbers(scoreable, incomplete);
+      if (incomplete.length || noRemark.length) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        const list = incomplete.map((n) => `Trans${n}`).join(', ');
-        /*Utils.showToast(
-          `⛔ Not submitted — <b>${list}</b> ${incomplete.length === 1 ? 'is' : 'are'} missing a complete label.`
-          + `<span class="tl-toast-sub">Finish the label, or press Space / click Submit with the mouse to`
+        const names = (nums) => nums.map((n) => `Trans${n}`).join(', ');
+        const parts = [];
+        if (incomplete.length) parts.push(`<b>${names(incomplete)}</b> ${incomplete.length === 1 ? 'needs' : 'need'} a complete label`);
+        if (noRemark.length) parts.push(`<b>${names(noRemark)}</b> ${noRemark.length === 1 ? 'needs' : 'need'} a remark`);
+        Utils.showToast(
+          `⛔ Not submitted — ${parts.join('; ')}.`
+          + `<span class="tl-toast-sub">Fix it, or press Space / click Submit with the mouse to`
           + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
-        );*/
+        );
         return;
       }
-      // Everything labelled — a clean pass, worth confirming instead of staying silent.
-      Utils.showToast('✅ Check passed — every populated translation is labelled.', 1600, 'ok');
+      // Everything labelled and remarked where needed — a clean pass, worth confirming instead of staying silent.
+      Utils.showToast('✅ Check passed — every populated translation is labelled and has a remark where one is needed.', 1600, 'ok');
       if (checkMode === 'submit') {
         e.preventDefault(); // this key's own effect is replaced by the synthesized Space below
         Utils.dispatchNativeSpace();
