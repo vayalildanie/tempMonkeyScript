@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await boot(page);
 });
 
-test('parses Trans module numbers and rejects unrelated names and wrong suffixes', async ({ page }) => {
+test('transNumFromModuleName returns the Trans number when name and suffix match, and null otherwise', { tag: '@logic' }, async ({ page }) => {
   // A regex that requires Trans immediately against the number returns null
   // for the fixture's exact "Trans 2 Remarks" spelling.
   expect(await parseNamed(page, 'Trans1', '')).toBe(1);
@@ -64,7 +64,7 @@ test('parses Trans module numbers and rejects unrelated names and wrong suffixes
   expect(spacedScore).toBe(2);
 });
 
-test('TransCursor toggles columns, remembers slots, falls back, and nextIn advances', async ({ page }) => {
+test('TransCursor toggles columns, remembers slots and refuses a missing slot, and nextIn steps over gaps', { tag: '@logic' }, async ({ page }) => {
   const result = await page.evaluate(() => {
     const calls = [];
     let nums = [1, 2, 3, 4, 5, 6, 7];

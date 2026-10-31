@@ -36,7 +36,7 @@ const allRemarks = (page) => Promise.all(SCOREABLE.map((n) => unit(page, n).then
 const summary = (page) => page.locator('#qc-summary').innerText();
 const bootQC = (page, data = DATA) => bootQCWith(page, data);
 
-test.describe('Z swaps Score and Remark', () => {
+test.describe('Z swaps Score and Remark', { tag: '@logic' }, () => {
   const kinds = [
     ['both halves differ', 1],
     ['only the score differs', 2],
@@ -78,14 +78,9 @@ test.describe('Z swaps Score and Remark', () => {
     await expect(badge(page, 4)).toContainText('a2 four');
     await expect(badge(page, 2)).not.toContainText('shared'); // equal remarks: no remark line
   });
-
-  test('counts a remark-only difference as still to reconcile', async ({ page }) => {
-    await bootQC(page);
-    await expect.poll(() => summary(page)).toContain('5 still to reconcile: Trans 1, 2, 4, 5, 7');
-  });
 });
 
-test.describe('failsafe: the preserved pair survives clears and edits', () => {
+test.describe('failsafe: the preserved pair survives clears and edits', { tag: '@logic' }, () => {
   // Annotator 1's Trans2 is ('2 Points / Fluency', 'shared'); Annotator 2's is ('3 Points', 'shared').
   const clears = [
     ['the remark is cleared', async (page) => { await setRemark(page, 2, ''); }],
@@ -212,7 +207,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
   });
 });
 
-test.describe('rows changing under the pairs', () => {
+test.describe('rows changing under the pairs', { tag: '@logic' }, () => {
   const heading = (page, text) => page.evaluate((t) => {
     document.querySelector('[data-module-key="NoteTrans"] h1').textContent = t;
   }, text);
@@ -262,7 +257,7 @@ test.describe('rows changing under the pairs', () => {
   });
 });
 
-test.describe('Z refusals', () => {
+test.describe('Z refusals', { tag: '@logic' }, () => {
   test('writes nothing and does not advance when Annotator 2\'s tab is active', async ({ page }) => {
     await bootQC(page);
     await clickTab(page, 1);
@@ -292,7 +287,7 @@ test.describe('Z refusals', () => {
   });
 });
 
-test.describe('Z auto-advance', () => {
+test.describe('Z auto-advance', { tag: '@logic' }, () => {
   test('moves the selection to the next scoreable translation and skips the empty Trans3', async ({ page }) => {
     await bootQC(page);
     await moveSelectionTo(page, 2);
@@ -310,7 +305,7 @@ test.describe('Z auto-advance', () => {
   });
 });
 
-test.describe('3 Points must have no remark', () => {
+test.describe('3 Points must have no remark', { tag: '@logic' }, () => {
   const warn = (page) => page.locator('#qc-warn');
 
   test('warns while a 3 Points translation holds a remark and clears when the remark is removed', async ({ page }) => {
@@ -342,7 +337,7 @@ test.describe('3 Points must have no remark', () => {
   });
 });
 
-test.describe('Z guards and mouse', () => {
+test.describe('Z guards and mouse', { tag: '@logic' }, () => {
   test('ignores a second Z that arrives while the first write is still in flight', async ({ page }) => {
     await bootQC(page);
     await page.evaluate(() => {
@@ -363,5 +358,12 @@ test.describe('Z guards and mouse', () => {
     await badge(page, 1).locator('.qc-undo').click();
     await expectUnit(page, 1, A(1));
     await expectSelected(page, 1);
+  });
+});
+
+test.describe('reconcile summary', { tag: '@logic' }, () => {
+  test('counts a translation as still to reconcile when only its remarks differ', async ({ page }) => {
+    await bootQC(page);
+    await expect.poll(() => summary(page)).toContain('5 still to reconcile: Trans 1, 2, 4, 5, 7');
   });
 });

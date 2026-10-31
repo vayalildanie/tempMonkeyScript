@@ -1,54 +1,20 @@
-// QC Compare (src/qc-compare.js) on the reduced quality_ fixture.
-// B0 smoke and B1 characterization of the current code (v1.5.3 plan, B-SUITE).
-// TransCursor internals (clamping, slot memory) belong to shared.spec.js and
-// scoring.spec.js; score-only Z, Rewrite and Remark "+ Add" are deliberately
-// not characterized here because v1.5.3 replaces or deletes them.
+// QC Compare (src/qc-compare.js) navigation on the reduced quality_ fixture:
+// when the module starts, the tab round trip, and the selector that moves with
+// the arrow keys and spans a translation's Score and Remark (v1.5.3: B-SEL,
+// B-SUITE). TransCursor internals (clamping, slot memory) belong to
+// shared.spec.js and scoring.spec.js.
 const { test, expect } = require('./helpers/test');
-const { bootModules } = require('./helpers/boot');
 const { boot } = require('./helpers/fixture');
-const { scoreMod, expanded } = require('./helpers/scores');
+const { scoreMod } = require('./helpers/scores');
 const {
-  SCOREABLE, remarkMod, scoreValue, expectScore, expectSelected,
-  activeTab, clickTab, cursorStatus, seedQC, bootQC: bootQCWith,
+  COMPARE_DATA, remarkMod, expectScore, expectSelected, activeTab, clickTab, bootQC: bootQCWith,
 } = require('./helpers/qc');
 
-const HELP_KEY = 'trans-tool:nova-qc-help-v1';
-
-// Annotator 1 / Annotator 2 data for the row. Trans3 has no translation text.
-// Differences: Trans1, Trans2, Trans4, Trans7. Agreements: Trans5, Trans6.
-const DATA = {
-  a1: {
-    1: { score: '', remark: '' },
-    2: { score: '2 Points / Fluency', remark: 'Lorem a1 two' },
-    4: { score: '3 Points', remark: '' },
-    5: { score: 'Confusing', remark: 'Lorem a1 five' },
-    6: { score: '3 Points', remark: '' },
-    7: { score: '', remark: '' },
-  },
-  a2: {
-    1: { score: '3 Points', remark: '' },
-    2: { score: '3 Points', remark: '' },
-    4: { score: '2 Points / Accuracy', remark: 'Lorem a2 four' },
-    5: { score: 'Confusing', remark: 'Lorem a2 five' },
-    6: { score: '3 Points', remark: '' },
-    7: { score: '3 Points', remark: '' },
-  },
-};
-
-const allScores = (page) => Promise.all(SCOREABLE.map((n) => scoreValue(page, n)));
-
 // Ready: the scrape has finished and painted a badge under every scoreable translation.
-const bootQC = (page) => bootQCWith(page, DATA);
+const bootQC = (page) => bootQCWith(page, COMPARE_DATA);
 
-async function openLabelMenu(page, n) {
-  await page.keyboard.press('2');
-  await expect.poll(() => cursorStatus(page)).toContain('press 1-9/0');
-  await expectScore(page, n, '2 Points');
-  await expect.poll(() => expanded(page, n)).toBe('true');
-}
-
-test.describe('smoke', () => {
-  test('scrapes both tabs and renders badges when the URL contains /quality_', async ({ page }) => {
+test.describe('starting on a QC page', () => {
+  test('scrapes both tabs and renders badges when the URL contains /quality_', { tag: '@logic' }, async ({ page }) => {
     await bootQC(page);
 
     await expect(page.locator('#qc-panel')).toBeVisible();
@@ -71,7 +37,7 @@ test.describe('smoke', () => {
     await expect(page.locator(`${remarkMod(2)} textarea`)).toHaveValue('Lorem a1 two');
   });
 
-  test('lists only the live shortcuts in the legend when the panel is open', async ({ page }) => {
+  test('lists only the live shortcuts in the legend when the panel is open', { tag: '@layout' }, async ({ page }) => {
     await bootQC(page);
     const legend = (await page.locator('#qc-help').textContent()).replace(/\s+/g, ' ');
     expect(legend).not.toMatch(/Rewrite|\+ ?Add|＋ ?Add/);
@@ -79,7 +45,7 @@ test.describe('smoke', () => {
     expect(legend).toContain('Move Focus (Trans)');
   });
 
-  test('never shows the QC panel when the URL is not a /quality_ page', async ({ page }) => {
+  test('never shows the QC panel when the URL is not a /quality_ page', { tag: '@logic' }, async ({ page }) => {
     await boot(page);
     await page.waitForTimeout(500);
     await expect(page.locator('#qc-panel')).toHaveCount(0);
@@ -88,7 +54,7 @@ test.describe('smoke', () => {
   });
 });
 
-test.describe('arrows', () => {
+test.describe('tab round trip', { tag: '@logic' }, () => {
   test.beforeEach(async ({ page }) => { await bootQC(page); });
 
   test('keeps the selection and an edited score when the tabs make a round trip', async ({ page }) => {
@@ -109,127 +75,7 @@ test.describe('arrows', () => {
   });
 });
 
-test.describe('score keys', () => {
-  test.beforeEach(async ({ page }) => { await bootQC(page); });
-
-  for (const row of [
-    { key: '3', score: '3 Points' },
-    { key: 'c', score: 'Confusing' },
-  ]) {
-    test(`sets ${row.score} on the selected translation when ${row.key} is pressed`, async ({ page }) => {
-      await page.keyboard.press(row.key);
-      await expectScore(page, 1, row.score);
-      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = ${row.score} ✓`);
-      await expect.poll(() => expanded(page, 1)).toBe('false');
-      // characterizes current behaviour: the B1 brief expects an advance to
-      // Trans2, but relabel() never moves the cursor (only Z advances).
-      await expectSelected(page, 1);
-    });
-  }
-
-  test('clears the selected translation\'s score when X is pressed', async ({ page }) => {
-    await page.keyboard.press('ArrowDown');
-    await expectSelected(page, 2);
-    await page.keyboard.press('x');
-    await expectScore(page, 2, '');
-    await expect.poll(() => cursorStatus(page)).toBe('Trans2 cleared');
-    await expectSelected(page, 2);
-    await expectScore(page, 1, '');
-    await expectScore(page, 4, '3 Points');
-  });
-});
-
-test.describe('label menu', () => {
-  test.beforeEach(async ({ page }) => { await bootQC(page); });
-
-  test('opens the label menu without advancing when 2 is pressed', async ({ page }) => {
-    await openLabelMenu(page, 1);
-    await expectSelected(page, 1);
-  });
-
-  for (const row of [
-    { key: '4', label: 'Fluency' },
-    { key: '2', label: 'Authenticity' },
-    { key: '3', label: 'Unauthentic Vocabulary / Collocations' },
-  ]) {
-    test(`picks label "${row.label}" when ${row.key} is pressed with the menu open`, async ({ page }) => {
-      await openLabelMenu(page, 1);
-      await page.keyboard.press(row.key);
-      await expectScore(page, 1, `2 Points / ${row.label}`);
-      await expect.poll(() => expanded(page, 1)).toBe('false');
-      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = 2 Points / ${row.label} ✓`);
-      // characterizes current behaviour: the B1 brief expects an advance to
-      // Trans2, but commitLabel() never moves the cursor.
-      await expectSelected(page, 1);
-    });
-  }
-
-  test('closes the menu and keeps bare 2 Points when Escape is pressed with the menu open', async ({ page }) => {
-    await openLabelMenu(page, 1);
-    await page.keyboard.press('Escape');
-    await expect.poll(() => expanded(page, 1)).toBe('false');
-    await expect.poll(() => cursorStatus(page)).toBe('Trans1: label pick cancelled');
-    await expectScore(page, 1, '2 Points');
-    await expectSelected(page, 1);
-  });
-});
-
-test.describe('help toggle', () => {
-  test('toggles the help panel and keeps the setting across a reload when O is pressed', async ({ page }) => {
-    await bootQC(page);
-    const help = page.locator('#qc-help');
-    await expect(help).toBeVisible();
-
-    await page.keyboard.press('o');
-    await expect(help).toBeHidden();
-    expect(await page.evaluate((k) => localStorage.getItem(k), HELP_KEY)).toBe('0');
-
-    await page.reload();
-    await seedQC(page, DATA);
-    await bootModules(page);
-    await expect(page.locator('#qc-panel')).toBeVisible();
-    await expect(help).toBeHidden();
-
-    await page.keyboard.press('o');
-    await expect(help).toBeVisible();
-    expect(await page.evaluate((k) => localStorage.getItem(k), HELP_KEY)).toBe('1');
-  });
-});
-
-test.describe('guards', () => {
-  const KEYS = ['z', '3', 'c', 'x', 'o', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'];
-
-  test('ignores every shortcut when a remark textarea has focus or a modifier is held', async ({ page }) => {
-    await bootQC(page);
-    const before = await allScores(page);
-    const helpShown = () => page.locator('#qc-help').isVisible();
-    const helpBefore = await helpShown();
-
-    // Typing in a Remarks box: the keys type, nothing else happens.
-    await page.locator(`${remarkMod(1)} textarea`).focus();
-    for (const key of KEYS) await page.keyboard.press(key);
-    await page.evaluate(() => document.activeElement.blur());
-
-    // Modifier combos, sent as synthetic events so the browser itself never
-    // acts on them (Alt+Arrow would navigate).
-    await page.evaluate((keys) => {
-      for (const mod of ['ctrlKey', 'metaKey', 'altKey']) {
-        for (const key of keys) {
-          document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, [mod]: true }));
-        }
-      }
-    }, KEYS);
-
-    await page.waitForTimeout(400);
-    expect(await allScores(page)).toEqual(before);
-    await expectSelected(page, 1);
-    expect(await cursorStatus(page)).toBe('');
-    expect(await helpShown()).toBe(helpBefore);
-    await expect(page.locator('.qc-badge.qc-adopted')).toHaveCount(0);
-  });
-});
-
-test.describe('selector spans Score and Remark', () => {
+test.describe('selector spans Score and Remark', { tag: '@logic' }, () => {
   // Trans numbers carrying each outline, read from the module that owns it.
   const outlined = (page) => page.evaluate(() => {
     const numOf = (el, re) => {

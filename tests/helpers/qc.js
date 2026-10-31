@@ -8,6 +8,28 @@ const { scoreMod, scoreNumsWith } = require('./scores');
 // Translations with text on the QC fixture; Trans3 has none.
 const SCOREABLE = [1, 2, 4, 5, 6, 7];
 
+// The row used by qc-navigation.spec.js and qc-shortcuts.spec.js (qc-swap.spec.js
+// has its own). Score differences: Trans1, Trans2, Trans4, Trans7. Trans5 agrees
+// on the score but its remarks differ. Trans6 agrees on both.
+const COMPARE_DATA = {
+  a1: {
+    1: { score: '', remark: '' },
+    2: { score: '2 Points / Fluency', remark: 'Lorem a1 two' },
+    4: { score: '3 Points', remark: '' },
+    5: { score: 'Confusing', remark: 'Lorem a1 five' },
+    6: { score: '3 Points', remark: '' },
+    7: { score: '', remark: '' },
+  },
+  a2: {
+    1: { score: '3 Points', remark: '' },
+    2: { score: '3 Points', remark: '' },
+    4: { score: '2 Points / Accuracy', remark: 'Lorem a2 four' },
+    5: { score: 'Confusing', remark: 'Lorem a2 five' },
+    6: { score: '3 Points', remark: '' },
+    7: { score: '3 Points', remark: '' },
+  },
+};
+
 const remarkMod = (n) => (n === 2 ? '[data-module-name="Trans 2 Remarks"]' : `[data-module-name="Trans${n} Remarks"]`);
 
 // The score text shown for Trans `n`, '' when the control shows none.
@@ -68,6 +90,7 @@ async function bootQC(page, data) {
 
 module.exports = {
   SCOREABLE,
+  COMPARE_DATA,
   remarkMod,
   scoreValue,
   expectScore,

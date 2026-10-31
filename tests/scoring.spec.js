@@ -69,8 +69,8 @@ test.beforeEach(async ({ page }) => {
   await expectActive(page, 1);
 });
 
-test.describe('lateral movement', () => {
-  test('left and right jump between the Trans1-3 and Trans4-7 columns', async ({ page }) => {
+test.describe('lateral movement', { tag: '@logic' }, () => {
+  test('ArrowLeft and ArrowRight jump between the Trans1-3 and Trans4-7 columns', async ({ page }) => {
     await page.keyboard.press('ArrowRight');
     await expectActive(page, 4);
     await page.keyboard.press('ArrowLeft');
@@ -81,7 +81,7 @@ test.describe('lateral movement', () => {
     await expectActive(page, 1);
   });
 
-  test('each column remembers the slot you last used', async ({ page }) => {
+  test('a column returns to its last-used slot when you toggle back to it', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectActive(page, 2);
     await page.keyboard.press('ArrowRight');
@@ -97,7 +97,7 @@ test.describe('lateral movement', () => {
     await expectActive(page, 2);
   });
 
-  test('the empty Trans3 is never active, whether stepping down or moving across', async ({ page }) => {
+  test('the empty Trans3 is skipped when stepping down or up, and checkCompleteness reports it as skipped', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectActive(page, 2);
     await page.keyboard.press('ArrowDown');
@@ -115,22 +115,22 @@ test.describe('lateral movement', () => {
     expect(completeness.skipped).toEqual([3]);
   });
 
-  test('moving down past the bottom of the right column stays on Trans7', async ({ page }) => {
+  test('ArrowDown stays on Trans7 when it is already at the bottom of the right column', async ({ page }) => {
     await page.keyboard.press('ArrowRight');
     for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown');
     await expectActive(page, 7);
   });
 });
 
-test.describe('3 and C advance', () => {
-  test('3 sets 3 Points and advances to the next scoreable translation', async ({ page }) => {
+test.describe('3 and C advance', { tag: '@logic' }, () => {
+  test('3 sets 3 Points, closes the cascader and advances when pressed on Trans1', async ({ page }) => {
     await page.keyboard.press('3');
     await expectValue(page, 1, '3 Points');
     await expectActive(page, 2);
     await expect.poll(() => expanded(page, 1)).toBe('false');
   });
 
-  test('C sets Confusing and skips the empty Trans3 on the way to Trans4', async ({ page }) => {
+  test('C sets Confusing and the advance skips the empty Trans3 when pressed on Trans2', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectActive(page, 2);
     await page.keyboard.press('c');
@@ -139,7 +139,7 @@ test.describe('3 and C advance', () => {
     await expect(page.locator(`${scoreMod(3)} .ant-select-selection-item`)).toHaveCount(0);
   });
 
-  test('3 on Trans7 sets it and stays there', async ({ page }) => {
+  test('3 sets 3 Points and stays when pressed on the last translation', async ({ page }) => {
     await page.keyboard.press('ArrowRight');
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
     await expectActive(page, 7);
@@ -150,8 +150,8 @@ test.describe('3 and C advance', () => {
   });
 });
 
-test.describe('2 and label picks', () => {
-  test('2 leaves the cascader open on bare 2 Points and does not advance', async ({ page }) => {
+test.describe('2 and label picks', { tag: '@logic' }, () => {
+  test('2 sets bare 2 Points and leaves the label menu open without advancing', async ({ page }) => {
     await trackActive(page);
     await openLabelMenu(page, 1);
     await expectValue(page, 1, '2 Points');
@@ -162,7 +162,7 @@ test.describe('2 and label picks', () => {
 
   for (const key of ['2', '3', '4', '5', '6', '7', '8', '9', '0']) {
     const label = LABELS[key === '0' ? 9 : Number(key) - 1];
-    test(`terminal label ${key} commits "${label}" and advances to Trans2`, async ({ page }) => {
+    test(`${key} commits "2 Points / ${label}" and advances to Trans2 when the label menu is open`, async ({ page }) => {
       await openLabelMenu(page, 1);
       await page.keyboard.press(key);
       await expectValue(page, 1, `2 Points / ${label}`);
@@ -172,7 +172,7 @@ test.describe('2 and label picks', () => {
     });
   }
 
-  test('1 drills into a category and only advances once its leaf is committed', async ({ page }) => {
+  test('1 drills into the category and advances once its lone leaf is committed', async ({ page }) => {
     await trackActive(page);
     await openLabelMenu(page, 1);
     await page.keyboard.press('1');
@@ -181,7 +181,7 @@ test.describe('2 and label picks', () => {
     expect(await moves(page)).toEqual([{ num: 2, trans1: '2 Points / Grammar / Grammar' }]);
   });
 
-  test('a category with several children waits for the next pick instead of advancing', async ({ page }) => {
+  test('a category waits for the next pick instead of advancing when it has several children', async ({ page }) => {
     // Give the leaf column of the category a second item so the auto-pick of a
     // lone leaf does not apply.
     await page.evaluate(() => {
@@ -210,7 +210,7 @@ test.describe('2 and label picks', () => {
     expect(await moves(page)).toEqual([{ num: 2, trans1: '2 Points / Grammar / Grammar' }]);
   });
 
-  test('a label pick from Trans2 skips the empty Trans3 and advances to Trans4', async ({ page }) => {
+  test('a label pick advances past the empty Trans3 when made on Trans2', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectActive(page, 2);
     await openLabelMenu(page, 2);
@@ -219,7 +219,7 @@ test.describe('2 and label picks', () => {
     await expectActive(page, 4);
   });
 
-  test('a label pick on Trans7 stays on Trans7', async ({ page }) => {
+  test('a label pick stays on Trans7 when made on the last translation', async ({ page }) => {
     await page.keyboard.press('ArrowRight');
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
     await expectActive(page, 7);
@@ -231,8 +231,8 @@ test.describe('2 and label picks', () => {
   });
 });
 
-test.describe('failed label click', () => {
-  test('a leaf click that leaves bare 2 Points does not advance and says so', async ({ page }) => {
+test.describe('failed label click', { tag: '@logic' }, () => {
+  test('the cursor stays and the status says not applied when the platform ignores a leaf click', async ({ page }) => {
     await trackActive(page);
     await openLabelMenu(page, 1);
     await page.evaluate(() => { window.__fixture.failNextLeaf = true; });
@@ -245,7 +245,7 @@ test.describe('failed label click', () => {
     expect(await moves(page)).toEqual([]);
   });
 
-  test('after a failed leaf the label pick can be retried and then advances', async ({ page }) => {
+  test('a retried label pick commits and advances after a failed leaf click', async ({ page }) => {
     await trackActive(page);
     await openLabelMenu(page, 1);
     await page.evaluate(() => { window.__fixture.failNextLeaf = true; });
@@ -258,7 +258,7 @@ test.describe('failed label click', () => {
     expect(await moves(page)).toEqual([{ num: 2, trans1: '2 Points / Unauthentic Vocabulary / Collocations' }]);
   });
 
-  test('a failed lone-leaf auto-pick after a category does not advance either', async ({ page }) => {
+  test('the cursor stays when the lone-leaf auto-pick after a category fails', async ({ page }) => {
     await trackActive(page);
     await openLabelMenu(page, 1);
     await page.evaluate(() => { window.__fixture.failNextLeaf = true; });
