@@ -1,12 +1,11 @@
-const { test, expect } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('./helpers/test');
 const { bootModules } = require('./helpers/boot');
+const { boot } = require('./helpers/fixture');
+const { POPULATED, scoreMod, setScores } = require('./helpers/scores');
+const { setRemarks } = require('./helpers/remarks');
 
-const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
 const MODE_KEY = 'trans-tool:nova-score-check-v1';
-const POPULATED = [1, 2, 4, 5, 6, 7]; // Trans3's preview is empty in the fixture
 
-const scoreMod = (n) => `[data-module-name="Trans${n} Score"]`;
 const fixture = (page) => page.evaluate(() => ({
   submitCount: window.__fixture.submitCount,
   spaceEvents: window.__fixture.spaceEvents,
@@ -43,10 +42,12 @@ async function scoreAll(page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await page.evaluate((k) => localStorage.removeItem(k), MODE_KEY);
-  await page.reload();
-  await bootModules(page);
+  await boot(page, {
+    beforeModules: async (p) => {
+      await p.evaluate((k) => localStorage.removeItem(k), MODE_KEY);
+      await p.reload();
+    },
+  });
   await expect(page.locator('.tl-active-score')).toHaveCount(1);
   await trackEnter(page);
 });
@@ -220,29 +221,8 @@ test.describe('empty-row auto-advance (Submit Check)', () => {
 });
 
 test.describe('remark gate', () => {
-  // Set the displayed scores directly; '' = unscored.
-  const setScores = (page, scores) => page.evaluate((map) => {
-    Object.keys(map).forEach((k) => {
-      const selector = document.querySelector(`[data-module-name="Trans${k} Score"] .ant-select-selector`);
-      let item = selector.querySelector('.ant-select-selection-item');
-      if (!item) {
-        item = document.createElement('span');
-        item.className = 'ant-select-selection-item';
-        selector.appendChild(item);
-      }
-      item.textContent = map[k];
-    });
-  }, scores);
-  // A page-side Remarks value, as NOVA's own field would hold it.
-  const setRemarks = (page, remarks) => page.evaluate((map) => {
-    Object.keys(map).forEach((k) => {
-      const mod = Array.from(document.querySelectorAll('[data-module-name]'))
-        .find((m) => new RegExp(`^Trans ?${k} Remarks$`).test(m.getAttribute('data-module-name')));
-      const ta = mod.querySelector('textarea');
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, map[k]);
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  }, remarks);
+  // setScores sets the displayed scores directly ('' = unscored); setRemarks
+  // sets page-side Remarks values as NOVA's own field would hold them.
   const ALL_THREE = { 1: '3 Points', 2: '3 Points', 4: '3 Points', 5: '3 Points', 6: '3 Points', 7: '3 Points' };
 
   // Rows: [label, score overrides, remarks, blocked?]. The Trans2 rows read the

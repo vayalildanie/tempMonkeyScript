@@ -1,8 +1,5 @@
-const { test, expect } = require('@playwright/test');
-const path = require('path');
-const { bootModules } = require('./helpers/boot');
-
-const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
+const { test, expect } = require('./helpers/test');
+const { boot } = require('./helpers/fixture');
 
 async function parseNamed(page, name, suffix) {
   return page.evaluate(({ name, suffix }) => {
@@ -12,8 +9,7 @@ async function parseNamed(page, name, suffix) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await bootModules(page);
+  await boot(page);
 });
 
 test('parses Trans module numbers and rejects unrelated names and wrong suffixes', async ({ page }) => {

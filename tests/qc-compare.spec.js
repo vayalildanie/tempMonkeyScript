@@ -3,16 +3,16 @@
 // TransCursor internals (clamping, slot memory) belong to shared.spec.js and
 // scoring.spec.js; score-only Z, Rewrite and Remark "+ Add" are deliberately
 // not characterized here because v1.5.3 replaces or deletes them.
-const { test, expect } = require('@playwright/test');
-const path = require('path');
+const { test, expect } = require('./helpers/test');
 const { bootModules } = require('./helpers/boot');
-
-const fileUrl = (name) => 'file://' + path.resolve(__dirname, 'fixtures', name).replace(/\\/g, '/');
-const qcUrl = fileUrl('quality_compare.html');
-const annotationUrl = fileUrl('annotation.html');
+const { boot } = require('./helpers/fixture');
+const { scoreMod, expanded } = require('./helpers/scores');
+const {
+  SCOREABLE, remarkMod, scoreValue, expectScore, expectSelected,
+  activeTab, clickTab, cursorStatus, seedQC, bootQC: bootQCWith,
+} = require('./helpers/qc');
 
 const HELP_KEY = 'trans-tool:nova-qc-help-v1';
-const SCOREABLE = [1, 2, 4, 5, 6, 7];
 
 // Annotator 1 / Annotator 2 data for the row. Trans3 has no translation text.
 // Differences: Trans1, Trans2, Trans4, Trans7. Agreements: Trans5, Trans6.
@@ -35,65 +35,17 @@ const DATA = {
   },
 };
 
-const scoreMod = (n) => `[data-module-name="Trans${n} Score"]`;
-const remarkMod = (n) => (n === 2 ? '[data-module-name="Trans 2 Remarks"]' : `[data-module-name="Trans${n} Remarks"]`);
+const allScores = (page) => Promise.all(SCOREABLE.map((n) => scoreValue(page, n)));
 
-function value(page, n) {
-  return page.locator(`${scoreMod(n)} .ant-select-selection-item`).first().textContent()
-    .then((t) => t.trim())
-    .catch(() => '');
-}
-async function expectValue(page, n, text) {
-  await expect.poll(() => value(page, n)).toBe(text);
-}
-
-// Trans numbers whose score host carries the QC selection outline.
-function selected(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll('.qc-active-score')).map((el) => {
-    const mod = el.closest('[data-module-name$=" Score"]');
-    const m = /^Trans ?(\d+) Score$/.exec(mod ? mod.getAttribute('data-module-name') : '');
-    return m ? parseInt(m[1], 10) : null;
-  }));
-}
-async function expectSelected(page, n) {
-  await expect.poll(() => selected(page)).toEqual([n]);
-}
-
-const activeTab = (page) => page.evaluate(() => Array.from(document.querySelectorAll('.tabs-group .tab'))
-  .findIndex((t) => t.classList.contains('active')));
-const cursorStatus = (page) => page.locator('#qc-cursor').textContent();
-const expanded = (page, n) => page.locator(`${scoreMod(n)} input`).first().getAttribute('aria-expanded');
-const allScores = (page) => Promise.all(SCOREABLE.map((n) => value(page, n)));
-
-async function clickTab(page, i) {
-  await page.locator('.tabs-group .tab').nth(i).click();
-  await expect.poll(() => activeTab(page)).toBe(i);
-}
-
-async function bootQC(page) {
-  await page.goto(qcUrl);
-  await page.evaluate((data) => window.__fixture.seedQC(data), DATA);
-  await bootModules(page);
-  // Ready: the scrape has finished and painted a badge under every scoreable translation.
-  await expect(page.locator('.qc-badge')).toHaveCount(SCOREABLE.length);
-  await expectSelected(page, 1);
-}
+// Ready: the scrape has finished and painted a badge under every scoreable translation.
+const bootQC = (page) => bootQCWith(page, DATA);
 
 async function openLabelMenu(page, n) {
   await page.keyboard.press('2');
   await expect.poll(() => cursorStatus(page)).toContain('press 1-9/0');
-  await expectValue(page, n, '2 Points');
+  await expectScore(page, n, '2 Points');
   await expect.poll(() => expanded(page, n)).toBe('true');
 }
-
-let pageErrors;
-test.beforeEach(({ page }) => {
-  pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push(String(e)));
-});
-test.afterEach(() => {
-  expect(pageErrors).toEqual([]);
-});
 
 test.describe('smoke', () => {
   test('scrapes both tabs and renders badges when the URL contains /quality_', async ({ page }) => {
@@ -115,7 +67,7 @@ test.describe('smoke', () => {
     await expect(page.locator(`${scoreMod(2)} .qc-badge`)).toContainText('Annotator 2: 3 Points');
     await expect(page.locator(`${scoreMod(3)} .qc-badge`)).toHaveCount(0);
     // Annotator 1's own data is what is on screen.
-    await expectValue(page, 2, '2 Points / Fluency');
+    await expectScore(page, 2, '2 Points / Fluency');
     await expect(page.locator(`${remarkMod(2)} textarea`)).toHaveValue('Lorem a1 two');
   });
 
@@ -128,8 +80,7 @@ test.describe('smoke', () => {
   });
 
   test('never shows the QC panel when the URL is not a /quality_ page', async ({ page }) => {
-    await page.goto(annotationUrl);
-    await bootModules(page);
+    await boot(page);
     await page.waitForTimeout(500);
     await expect(page.locator('#qc-panel')).toHaveCount(0);
     await expect(page.locator('#qc-style')).toHaveCount(0);
@@ -161,15 +112,15 @@ test.describe('arrows', () => {
     await page.keyboard.press('ArrowDown');
     await expectSelected(page, 4);
     await page.keyboard.press('c');
-    await expectValue(page, 4, 'Confusing');
+    await expectScore(page, 4, 'Confusing');
 
     await clickTab(page, 1);
-    await expectValue(page, 4, '2 Points / Accuracy');
+    await expectScore(page, 4, '2 Points / Accuracy');
     await expect(page.locator(`${remarkMod(4)} textarea`)).toHaveValue('Lorem a2 four');
     await expectSelected(page, 4);
 
     await clickTab(page, 0);
-    await expectValue(page, 4, 'Confusing');
+    await expectScore(page, 4, 'Confusing');
     await expectSelected(page, 4);
   });
 
@@ -195,7 +146,7 @@ test.describe('score keys', () => {
   ]) {
     test(`sets ${row.score} on the selected translation when ${row.key} is pressed`, async ({ page }) => {
       await page.keyboard.press(row.key);
-      await expectValue(page, 1, row.score);
+      await expectScore(page, 1, row.score);
       await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = ${row.score} ✓`);
       await expect.poll(() => expanded(page, 1)).toBe('false');
       // characterizes current behaviour: the B1 brief expects an advance to
@@ -208,11 +159,11 @@ test.describe('score keys', () => {
     await page.keyboard.press('ArrowDown');
     await expectSelected(page, 2);
     await page.keyboard.press('x');
-    await expectValue(page, 2, '');
+    await expectScore(page, 2, '');
     await expect.poll(() => cursorStatus(page)).toBe('Trans2 cleared');
     await expectSelected(page, 2);
-    await expectValue(page, 1, '');
-    await expectValue(page, 4, '3 Points');
+    await expectScore(page, 1, '');
+    await expectScore(page, 4, '3 Points');
   });
 });
 
@@ -232,7 +183,7 @@ test.describe('label menu', () => {
     test(`picks label "${row.label}" when ${row.key} is pressed with the menu open`, async ({ page }) => {
       await openLabelMenu(page, 1);
       await page.keyboard.press(row.key);
-      await expectValue(page, 1, `2 Points / ${row.label}`);
+      await expectScore(page, 1, `2 Points / ${row.label}`);
       await expect.poll(() => expanded(page, 1)).toBe('false');
       await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = 2 Points / ${row.label} ✓`);
       // characterizes current behaviour: the B1 brief expects an advance to
@@ -246,7 +197,7 @@ test.describe('label menu', () => {
     await page.keyboard.press('Escape');
     await expect.poll(() => expanded(page, 1)).toBe('false');
     await expect.poll(() => cursorStatus(page)).toBe('Trans1: label pick cancelled');
-    await expectValue(page, 1, '2 Points');
+    await expectScore(page, 1, '2 Points');
     await expectSelected(page, 1);
   });
 });
@@ -262,7 +213,7 @@ test.describe('help toggle', () => {
     expect(await page.evaluate((k) => localStorage.getItem(k), HELP_KEY)).toBe('0');
 
     await page.reload();
-    await page.evaluate((data) => window.__fixture.seedQC(data), DATA);
+    await seedQC(page, DATA);
     await bootModules(page);
     await expect(page.locator('#qc-panel')).toBeVisible();
     await expect(help).toBeHidden();
@@ -352,7 +303,7 @@ test.describe('selector spans Score and Remark', () => {
     expect(await domOrder(page, 1)).toEqual(['control', 'badge', 'remarks']);
     await page.keyboard.press('z');
     await expect(page.locator(`${scoreMod(1)} .qc-badge`)).toHaveClass(/qc-adopted/);
-    await expectValue(page, 1, '3 Points');
+    await expectScore(page, 1, '3 Points');
     expect(await domOrder(page, 1)).toEqual(['control', 'badge', 'remarks']);
   });
 

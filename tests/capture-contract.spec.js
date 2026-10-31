@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./helpers/test');
 const fs = require('fs');
 const path = require('path');
 const { contract, checkContract } = require('./helpers/selector-contract');

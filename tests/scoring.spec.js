@@ -1,8 +1,6 @@
-const { test, expect } = require('@playwright/test');
-const path = require('path');
-const { bootModules } = require('./helpers/boot');
-
-const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
+const { test, expect } = require('./helpers/test');
+const { boot } = require('./helpers/fixture');
+const { scoreMod, expanded, scoreNumsWith } = require('./helpers/scores');
 
 // The fixture's second-level labels, in menu order. Keys 2-9 and 0 pick
 // LABELS[n - 1] (0 is the 10th); key 1 is a category with one leaf below it.
@@ -19,16 +17,8 @@ const LABELS = [
   'Other',
 ];
 
-const scoreMod = (n) => `[data-module-name="Trans${n} Score"]`;
-
 // Trans numbers whose "TransN Score" block currently carries tl-active-score.
-function activeNums(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll('.tl-active-score')).map((el) => {
-    const mod = el.closest('[data-module-name$=" Score"]');
-    const m = /^Trans ?(\d+) Score$/.exec(mod ? mod.getAttribute('data-module-name') : '');
-    return m ? parseInt(m[1], 10) : null;
-  }));
-}
+const activeNums = (page) => scoreNumsWith(page, 'tl-active-score');
 
 async function expectActive(page, n) {
   await expect.poll(() => activeNums(page)).toEqual([n]);
@@ -43,10 +33,6 @@ async function expectValue(page, n, text) {
 }
 
 const status = (page) => page.locator('#tl-score-status').innerText();
-
-function expanded(page, n) {
-  return page.locator(`${scoreMod(n)} input`).first().getAttribute('aria-expanded');
-}
 
 // Records every tl-active-score move, with Trans1's displayed value at that
 // moment, so a test can prove the cursor never moved early or at all.
@@ -79,8 +65,7 @@ async function openLabelMenu(page, n) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await bootModules(page);
+  await boot(page);
   await expectActive(page, 1);
 });
 

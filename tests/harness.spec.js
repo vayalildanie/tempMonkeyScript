@@ -1,12 +1,8 @@
-const { test, expect } = require('@playwright/test');
-const path = require('path');
-const { bootModules } = require('./helpers/boot');
-
-const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
+const { test, expect } = require('./helpers/test');
+const { boot } = require('./helpers/fixture');
 
 test('boots the annotation fixture with an empty Trans3, a closed 2 Points score, and a visible scoring panel', async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await bootModules(page);
+  await boot(page);
 
   const texts = await page.locator('[data-module-name^="Trans"] .preview-content').evaluateAll((nodes) => {
     const byName = new Map();
@@ -40,8 +36,7 @@ test('boots the annotation fixture with an empty Trans3, a closed 2 Points score
 });
 
 test('Utils.clickEl opens a cascader and selects 3 Points', async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await bootModules(page);
+  await boot(page);
 
   const opened = await page.evaluate(() => {
     const mod = document.querySelector('[data-module-name="Trans1 Score"]');

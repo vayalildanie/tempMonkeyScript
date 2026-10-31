@@ -1,166 +1,17 @@
-const { test, expect } = require('@playwright/test');
-const path = require('path');
-const { bootModules } = require('./helpers/boot');
-
-const fixtureUrl = 'file://' + path.resolve(__dirname, 'fixtures/annotation.html').replace(/\\/g, '/');
+const { test, expect } = require('./helpers/test');
+const { boot } = require('./helpers/fixture');
+const { POPULATED, ALL_EMPTY, setScores } = require('./helpers/scores');
+const {
+  setRemark, remarksValues, expectRemarks, activeTargets, expectTarget,
+  selectTrans, selectAcross, makeSelection, edit, blur, openComposer,
+} = require('./helpers/remarks');
 
 // Fixture facts: Trans1, 2, 4-7 are populated; Trans3's text is empty. The
 // per-translation Remarks modules are TransN Remarks, except Trans2's, which
 // the real capture spells "Trans 2 Remarks".
-const POPULATED = [1, 2, 4, 5, 6, 7];
-
-// Set what each translation's score control displays. '' = unscored.
-function setScores(page, scores) {
-  return page.evaluate((map) => {
-    Object.keys(map).forEach((k) => {
-      const mod = document.querySelector(`[data-module-name="Trans${k} Score"]`);
-      const selector = mod.querySelector('.ant-select-selector');
-      let item = selector.querySelector('.ant-select-selection-item');
-      if (!item) {
-        item = document.createElement('span');
-        item.className = 'ant-select-selection-item';
-        selector.appendChild(item);
-      }
-      item.textContent = map[k];
-    });
-  }, scores);
-}
-
-const ALL_EMPTY = { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' };
-
-function remarksValues(page) {
-  return page.evaluate(() => {
-    const out = {};
-    document.querySelectorAll('[data-module-name]').forEach((mod) => {
-      const m = /^Trans ?(\d+) Remarks$/.exec(mod.getAttribute('data-module-name'));
-      if (m && !(m[1] in out)) out[m[1]] = mod.querySelector('textarea').value;
-    });
-    return out;
-  });
-}
-
-async function expectRemarks(page, expected) {
-  await expect.poll(async () => {
-    const all = await remarksValues(page);
-    const out = {};
-    Object.keys(expected).forEach((k) => { out[k] = all[k]; });
-    return out;
-  }).toEqual(expected);
-}
-
-function activeTargets(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll('.rmd-active-target')).map((el) => {
-    const m = /^Trans ?(\d+) Remarks$/.exec(el.getAttribute('data-module-name') || '');
-    return m ? parseInt(m[1], 10) : el.getAttribute('data-module-name');
-  }));
-}
-
-async function expectTarget(page, n) {
-  await expect.poll(() => activeTargets(page)).toEqual([n]);
-}
-
-// A page-side edit of a Remarks textarea, as NOVA's own field would deliver it.
-function pageEdit(page, n, text) {
-  return page.evaluate(({ n, text }) => {
-    const mod = Array.from(document.querySelectorAll('[data-module-name]'))
-      .find((m) => new RegExp(`^Trans ?${n} Remarks$`).test(m.getAttribute('data-module-name')));
-    const ta = mod.querySelector('textarea');
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, text);
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-  }, { n, text });
-}
-
-function selectTrans(page, n) {
-  return page.evaluate((n) => {
-    const el = document.querySelector(`[data-module-name="Trans${n}"] .preview-content`);
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    return el.textContent.trim();
-  }, n);
-}
-
-function selectAcross(page, a, b) {
-  return page.evaluate(({ a, b }) => {
-    const first = document.querySelector(`[data-module-name="Trans${a}"] .preview-content`);
-    const second = document.querySelector(`[data-module-name="Trans${b}"] .preview-content`);
-    const range = document.createRange();
-    range.setStart(first, 0);
-    range.setEnd(second, second.childNodes.length);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }, { a, b });
-}
-
-// Builds one named selection in the page and returns its raw text.
-function makeSelection(page, key) {
-  return page.evaluate((key) => {
-    const q = (s) => document.querySelector(s);
-    const text = (n) => q(`[data-module-name="Trans${n}"] .preview-content`);
-    const noteBody = q('[data-module-key="NoteTrans"] #content');
-    const noteHead = q('[data-module-key="NoteTrans"] h1');
-    const ctx = q('[data-module-name="Context-EN"] .preview-content');
-    const expandBtn = q('[data-module-key="NoteTrans"] .expand-btn');
-    const imageList = q('[data-module-key="NoteTrans"] .image-list-container');
-    const r = document.createRange();
-    const toEnd = (el) => r.setEnd(el, el.childNodes.length);
-    switch (key) {
-      case 'whole': r.selectNodeContents(text(5)); break;
-      case 'part': {
-        const t = text(2).querySelector('span span').firstChild;
-        r.setStart(t, 6);
-        r.setEnd(t, 17);
-        break;
-      }
-      case 'parent-boundary': {
-        const pc = text(4);
-        r.setStart(pc, 0);
-        r.setEnd(pc.parentElement, Array.prototype.indexOf.call(pc.parentElement.childNodes, pc) + 1);
-        break;
-      }
-      case 'note-body': r.selectNodeContents(noteBody); break;
-      case 'note-heading-and-body': r.setStart(noteHead, 0); toEnd(noteBody); break;
-      case 'tagged':
-        text(6).textContent = '<content1>Tagged words here</content1>';
-        r.selectNodeContents(text(6));
-        break;
-      case 'two-translations': r.setStart(text(4), 0); toEnd(text(5)); break;
-      case 'note-into-collapse': r.setStart(noteBody, 0); toEnd(expandBtn); break;
-      case 'note-through-pictures': r.setStart(noteHead, 0); toEnd(imageList); break;
-      case 'collapse-only': r.selectNodeContents(expandBtn); break;
-      case 'note-and-translation': r.setStart(noteBody, 0); toEnd(text(1)); break;
-      case 'context-and-translation': r.setStart(ctx, 0); toEnd(text(1)); break;
-      case 'context-only': r.selectNodeContents(ctx); break;
-      case 'title-and-text': r.setStart(q('[data-module-name="Trans5"] .title-text'), 0); toEnd(text(5)); break;
-      case 'select-all': r.selectNodeContents(document.body); break;
-      default: throw new Error(`unknown selection ${key}`);
-    }
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-    return sel.toString();
-  }, key);
-}
-
-const edit = (page) => page.locator('#rmd-edit');
-// A chip click or quote re-focuses #rmd-edit one animation frame later, so wait
-// for that before blurring, or the late focus lands after the blur.
-async function blur(page) {
-  await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('rmd-edit');
-  await page.evaluate(() => document.activeElement.blur());
-}
-
-async function openComposer(page) {
-  await page.keyboard.press('o');
-  await expect(page.locator('#rmd-popover')).toBeVisible();
-}
 
 test.beforeEach(async ({ page }) => {
-  await page.goto(fixtureUrl);
-  await bootModules(page);
+  await boot(page);
   await expect(page.locator('#rmd-popover')).toBeAttached();
 });
 
@@ -271,7 +122,7 @@ test.describe('arrow movement', () => {
     await setScores(page, lateScoring);
     await openComposer(page);
     await expectTarget(page, 4);
-    await pageEdit(page, 5, 'xyz');
+    await setRemark(page, 5, 'xyz');
     await page.evaluate(() => {
       const ta = document.querySelector('[data-module-name="Trans5 Remarks"] textarea');
       ta.focus();
@@ -381,9 +232,9 @@ test.describe('writes', () => {
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points' });
     await openComposer(page);
     await expectTarget(page, 2);
-    await pageEdit(page, 2, 'typed on page');
+    await setRemark(page, 2, 'typed on page');
     await expect(edit(page)).toHaveValue('typed on page');
-    await pageEdit(page, 4, 'other');
+    await setRemark(page, 4, 'other');
     await expectTarget(page, 4);
     await expect(edit(page)).toHaveValue('other');
     await expectRemarks(page, { 2: 'typed on page', 4: 'other' });
@@ -391,8 +242,8 @@ test.describe('writes', () => {
 
   test('Clear affects only the active target', async ({ page }) => {
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points' });
-    await pageEdit(page, 2, 'two');
-    await pageEdit(page, 4, 'four');
+    await setRemark(page, 2, 'two');
+    await setRemark(page, 4, 'four');
     await openComposer(page);
     await expectTarget(page, 2);
     await expect(edit(page)).toHaveValue('two');
@@ -420,8 +271,8 @@ test.describe('mouse selection and direct editing', () => {
   const area = (page, n) => page.locator(`[data-module-name="Trans${n} Remarks"]`).first();
 
   test('module clicks load text without writing; subsequent chips and Clear affect only that target', async ({ page }) => {
-    await pageEdit(page, 1, 'one');
-    await pageEdit(page, 4, 'four');
+    await setRemark(page, 1, 'one');
+    await setRemark(page, 4, 'four');
     await openComposer(page);
     await area(page, 4).dispatchEvent('click');
     await expectTarget(page, 4);
@@ -435,7 +286,7 @@ test.describe('mouse selection and direct editing', () => {
   });
 
   test('real textarea click preserves focus, caret, native arrows and live typing', async ({ page }) => {
-    await pageEdit(page, 4, 'abcd');
+    await setRemark(page, 4, 'abcd');
     await openComposer(page);
     await field(page, 4).click();
     await expectTarget(page, 4);
@@ -450,7 +301,7 @@ test.describe('mouse selection and direct editing', () => {
 
   test('direct paste-like input switches target, mirrors multiline text and consumes first Up', async ({ page }) => {
     await openComposer(page);
-    await pageEdit(page, 5, 'five\n"quoted" <text>');
+    await setRemark(page, 5, 'five\n"quoted" <text>');
     await expectTarget(page, 5);
     await expect(edit(page)).toHaveValue('five\n"quoted" <text>');
     await page.keyboard.press('ArrowUp');
@@ -460,7 +311,7 @@ test.describe('mouse selection and direct editing', () => {
   test('ineligible empty translation clicks and edits do not switch or leak text', async ({ page }) => {
     await openComposer(page);
     await area(page, 3).dispatchEvent('click');
-    await pageEdit(page, 3, 'ineligible');
+    await setRemark(page, 3, 'ineligible');
     await expectTarget(page, 1);
     await expect(edit(page)).toHaveValue('');
     await expectRemarks(page, { 3: 'ineligible', 1: '' });
@@ -468,7 +319,7 @@ test.describe('mouse selection and direct editing', () => {
 
   test('same-target clicks preserve textarea selection and consume the special Up jump', async ({ page }) => {
     await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' });
-    await pageEdit(page, 4, 'four');
+    await setRemark(page, 4, 'four');
     await openComposer(page);
     await field(page, 4).click();
     await field(page, 4).evaluate((ta) => ta.setSelectionRange(1, 3));
@@ -490,7 +341,7 @@ test.describe('mouse selection and direct editing', () => {
 
   test('closed clicks and inputs do not retain a mouse target on reopen', async ({ page }) => {
     await field(page, 4).click();
-    await pageEdit(page, 4, 'closed');
+    await setRemark(page, 4, 'closed');
     expect(await activeTargets(page)).toEqual([]);
     await field(page, 4).evaluate((ta) => ta.blur());
     await openComposer(page);
@@ -505,7 +356,7 @@ test.describe('mouse selection and direct editing', () => {
     await expectTarget(page, 4);
     await edit(page).fill('proxy');
     await expectRemarks(page, { 4: 'proxy', 1: '' });
-    await pageEdit(page, 4, 'native');
+    await setRemark(page, 4, 'native');
     await expect(edit(page)).toHaveValue('native');
   });
 
@@ -522,9 +373,9 @@ test.describe('mouse selection and direct editing', () => {
   });
 
   test('spaced module names select even when the new text equals the proxy', async ({ page }) => {
-    await pageEdit(page, 1, 'same');
+    await setRemark(page, 1, 'same');
     await openComposer(page);
-    await pageEdit(page, 2, 'same');
+    await setRemark(page, 2, 'same');
     await expectTarget(page, 2);
     await edit(page).fill('two');
     await expectRemarks(page, { 1: 'same', 2: 'two' });
@@ -547,7 +398,7 @@ test.describe('mouse selection and direct editing', () => {
     await page.keyboard.press('Escape');
     await openComposer(page);
     await expectTarget(page, 4);
-    await pageEdit(page, 4, 'composer'); // unchanged native input is still an edit interaction
+    await setRemark(page, 4, 'composer'); // unchanged native input is still an edit interaction
     await page.keyboard.press('ArrowUp');
     await expectTarget(page, 2);
   });
@@ -577,9 +428,9 @@ test.describe('row change and re-render while open', () => {
 
   test('a row change re-resolves the initial target and never carries text into the new row', async ({ page }) => {
     await setScores(page, lateScoring);
-    await pageEdit(page, 1, 'one');
-    await pageEdit(page, 2, 'two');
-    await pageEdit(page, 5, 'five');
+    await setRemark(page, 1, 'one');
+    await setRemark(page, 2, 'two');
+    await setRemark(page, 5, 'five');
     await openComposer(page);
     await expectTarget(page, 4);
     await edit(page).click();
@@ -600,7 +451,7 @@ test.describe('row change and re-render while open', () => {
 
   test('a row change that keeps the same target still reloads its text from the new row', async ({ page }) => {
     await setScores(page, lateScoring);
-    await pageEdit(page, 4, 'old row remark');
+    await setRemark(page, 4, 'old row remark');
     await openComposer(page);
     await expectTarget(page, 4);
     await expect(edit(page)).toHaveValue('old row remark');
@@ -618,8 +469,8 @@ test.describe('row change and re-render while open', () => {
 
   test('when the active target stops being populated the target falls to a populated one without writing', async ({ page }) => {
     await setScores(page, lateScoring);
-    await pageEdit(page, 2, 'two');
-    await pageEdit(page, 4, 'four');
+    await setRemark(page, 2, 'two');
+    await setRemark(page, 4, 'four');
     await openComposer(page);
     await expectTarget(page, 4);
     await expect(edit(page)).toHaveValue('four');
@@ -646,7 +497,7 @@ test.describe('quoting', () => {
 
   test('Q with no selection focuses #rmd-edit with the caret at the end', async ({ page }) => {
     await setScores(page, ALL_EMPTY);
-    await pageEdit(page, 1, 'seed text');
+    await setRemark(page, 1, 'seed text');
     await page.keyboard.press('q'); // composer closed: opens first
     await expect(page.locator('#rmd-popover')).toBeVisible();
     await expectTarget(page, 1);
@@ -768,7 +619,7 @@ test.describe('quoting', () => {
     });
 
     test('a pre-v1.5.3 Trans N quote still counts as a quote before a chip', async ({ page }) => {
-      await pageEdit(page, 1, 'Trans 2 "x"');
+      await setRemark(page, 1, 'Trans 2 "x"');
       await openComposer(page);
       await expectTarget(page, 1);
       const chip = await chipText(page);
