@@ -189,6 +189,34 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await expect(badge(page, 6)).not.toContainText('was:');
   });
 
+  test('replaces the previous row\'s leftover remark with the real one when the platform corrects it after the scrape', async ({ page }) => {
+    const leftover = { ...DATA, a1: { ...DATA.a1, 6: { score: '3 Points', remark: 'leftover from the last row' } } };
+    await bootQC(page, leftover);
+    await selectTrans(page, 6);
+    await setRemark(page, 6, 'the real remark', { input: false }); // the platform catching up: no input event
+    await page.waitForTimeout(2200);
+    await page.keyboard.press('z'); // Annotator 1's original is the real remark, so this flips to Annotator 2's (empty)
+    await expectUnit(page, 6, { score: '3 Points', remark: '' });
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('z');
+    await expectUnit(page, 6, { score: '3 Points', remark: 'the real remark' });
+  });
+
+  test('stops correcting the pair once the user has flipped a translation', async ({ page }) => {
+    await bootQC(page);
+    await page.keyboard.press('z'); // Trans1: the pair is now in use
+    await expectUnit(page, 1, B(1));
+    await selectTrans(page, 4); // originals ('3 Points', '') and ('3 Points', 'a2 four')
+    await setRemark(page, 4, 'late text', { input: false });
+    await page.waitForTimeout(2200);
+    await page.keyboard.press('z'); // live matches neither original: Annotator 2's is written, the text is kept
+    await expectUnit(page, 4, B(4));
+    await expect(badge(page, 4)).toContainText('late text');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('z');
+    await expectUnit(page, 4, A(4)); // the original stays the empty one
+  });
+
   test('keeps a hand-edited remark in the badge before Z overwrites it', async ({ page }) => {
     await bootQC(page);
     await selectTrans(page, 4);

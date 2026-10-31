@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.2`, on `main`.** It is covered by an automated
+> **Current version: `v1.5.3`, on `main`.** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -441,7 +441,7 @@ QC Compare:
 - **Fixed** QC row-change detection: it read a module that no longer exists,
   so a new row was never re-scraped.
 
-Tests: 181 Playwright tests, including a new reduced QC page fixture
+Tests: 191 Playwright tests, including a new reduced QC page fixture
 (`tests/fixtures/quality_compare.html`) with a two-tab simulator. Live NOVA
 checks are listed under "Known unverified".
 

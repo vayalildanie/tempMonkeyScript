@@ -30,6 +30,19 @@ Counts are Playwright tests as run. Baseline 96. After B2: 151 (96 + 3 escape + 
 | B4+B5 | `ef9a87e` | Preserved pair, symmetric flip-flop, manual stash, fill-only lazy-load verify, whole-unit badges, row-change fix. 21 swap tests written red first (16 failed), then green. Mutation checks: neither-case target changed to `a` failed 4 clears/edit tests; removing the stash failed the hand-edit test |
 | B6 | next commit | 3 new warning tests red (2 failed, 1 negative guard passed), then green; legend reads `Z Swaps Score + Remark`. Full suite 181/181 |
 
+## Review R-A (Track A) and rulings
+
+Reviewer: `agent-skills:code-reviewer` (read-only), verdict REQUEST CHANGES, no critical defects. Fixed in `1b86e94`:
+
+1. **Fixed: Note quote root too wide.** `.ant-spin-container` also holds the Collapse control (`.expand-btn`, inside `.refactor-content`) and the picture list (`.image-list-container`, a sibling). Reproduced by the reviewer against the real capture markup. The Note source is now its `h1` plus `.refactor-content .content-box`, applied as one group with the single-source rule; whitespace is ignored in the equality (the real page has no separating spaces between blocks).
+2. **Fixed: tests could not see (1).** The fixture Note now carries the chrome; accept rows assert exact tokens and no chrome words; new refusal rows cover the Collapse control and picture list; refusals assert the selection is kept. Mutation check: restoring the wide root failed the 3 new rows.
+3. **Fixed: toast test passed with reasons swapped.** Now asserts `Trans4 needs a complete label; Trans2 needs a remark.` in both Label and Submit Check.
+4. **Fixed: Escape test's "unrelated focus" was a button.** The fixture now has the header `textarea#form_item_remark`; a test asserts the first Escape closes with it focused.
+5. **Fixed: spurious toast from the empty-row timer.** The timer re-checks `scoreable` before dispatching Enter; new test renders translations inside the second.
+6. **Accepted: the gate fails open when a translation has no Remarks textarea** (documented in code; nothing for the annotator to fill in).
+7. **Fixed: Escape during IME composition** is now left to the IME (`e.isComposing`); tested.
+8. **Accepted nits:** a typed remark that ends in a quoted span is treated as a quote for chip separators (any trailing `"…"`); a zero-width-space-only remark passes `trim()`.
+
 ## Findings and rulings
 
 - **B1 finding:** `3`, `C`, and label-digit picks do not advance in QC today (`relabel()` and `commitLabel()` never move the cursor); only Z advances. Ruling: unchanged in v1.5.3; plan lines corrected. Not in scope.

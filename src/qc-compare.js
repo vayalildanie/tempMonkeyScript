@@ -62,6 +62,8 @@
     let pairs = new Map();       // n -> { a, b, manual }
     let swappedNums = [];        // translations whose live Annotator 1 unit currently equals Annotator 2's (for the summary)
     let remarkTouched = false;   // the user typed in a Remarks box since the last scrape (stops the lazy-load verify)
+    let pairsTouched = false;    // the user flipped or relabeled something since the last scrape (also stops the verify)
+    let verifyRetries = 0;       // re-scrapes the verify has done for this row (capped)
     let verifyTimer = null;      // bounded post-scrape check that late-loading remark text was captured
     let scraping = false;        // currently switching tabs to scrape (don't render badges now, or Annotator 2's value gets rendered as Annotator 1)
     let adopting = false;        // currently adopting/writing a value (driving the cascader; don't let the observer mis-render now)
@@ -293,6 +295,7 @@
       if (side === 'b' && !pair.b.score) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return false; }
       // A live unit that is neither original (a hand edit) is kept before it is overwritten.
       if (!sameUnit(live, pair.a) && !sameUnit(live, pair.b) && (live.score || live.remark.trim())) pair.manual = live;
+      pairsTouched = true;
       adopting = true;
       setSummary(`Swapping Trans${n}…`);
       let ok = false;
@@ -361,6 +364,7 @@
       try {
         await writeCascade(n, pathKey);
         snapA[n] = pathKey;
+        pairsTouched = true;
         if (pathKey === PATH_KEY['2']) {
           await reopenForLabelPick(n);
           setCursorStatus(`Trans${n} = 2 Points — press 1-9/0 for a label`);
@@ -384,6 +388,7 @@
       try {
         await clearCascade(n);
         snapA[n] = '';
+        pairsTouched = true;
         setCursorStatus(`Trans${n} cleared`);
       } catch (e) {
         console.error(`${TAG} Erase failed:`, e);
@@ -504,6 +509,7 @@
       if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
       const got = readScore(n);
       snapA[n] = got;
+      pairsTouched = true;
       setCursorStatus(got ? `Trans${n} = ${got} ✓` : `⚠️ Trans${n}: label didn't register`);
       render();
     }
@@ -518,13 +524,13 @@
     // ====================================================================
     // Scrape both: stay on Annotator 1 -> read A (the live value) -> click Annotator 2, read B -> click back to Annotator 1.
     // ====================================================================
-    // `fillOnly` is the lazy-load re-check of the same row: it may only fill values that were empty, never replace or
-    // empty a stored one, so the preserved pair cannot be damaged by a second read.
-    async function scrapeBoth(fillOnly = false) {
+    // `isVerifyRetry` is the lazy-load re-check of the same row (see scheduleRemarkVerify): it rebuilds the pairs from a
+    // fresh read, which is safe only because that check runs solely while the user has not typed, flipped, or
+    // relabeled anything, so no preserved value can be lost. A failed read leaves the existing pairs alone.
+    async function scrapeBoth(isVerifyRetry = false) {
       const tabs = getTabs();
       if (tabs.length < 2) { ready = false; log('Only one annotator — nothing to compare'); setSummary('Only one annotator — nothing to compare.'); return; }
       scraping = true;
-      if (!fillOnly) pairs = new Map(); // new row -> the previous row's pairs are gone
       clearBadges();
       setSummary('Loading Annotator 2…');
       try {
@@ -538,29 +544,15 @@
         for (const n of nums) { b[n] = readScore(n); rb[n] = readRemark(n); } // read Annotator 2 scores and remarks
         ensureVerdict('wrong'); // fixed rule: Annotator 2 gets verdict "3" (skip if already marked)
         await clickTab(0);                                              // switch back to Annotator 1
-        for (const n of nums) {
-          const read = { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] } };
-          const pair = pairs.get(n);
-          if (!pair) { pairs.set(n, { a: read.a, b: read.b, manual: null }); continue; }
-          for (const side of ['a', 'b']) { // fill-only merge: an empty stored half may be filled, nothing is replaced
-            if (!pair[side].score && read[side].score) pair[side].score = read[side].score;
-            if (!pair[side].remark && read[side].remark) pair[side].remark = read[side].remark;
-          }
-        }
-        if (fillOnly) {
-          for (const n of nums) {
-            if (!snapB[n] && b[n]) snapB[n] = b[n];
-            if (!remB[n] && rb[n]) remB[n] = rb[n];
-            if (!snapA[n] && a[n]) snapA[n] = a[n];
-            if (!remA[n] && ra[n]) remA[n] = ra[n];
-          }
-        } else {
-          snapA = a; snapB = b; remA = ra; remB = rb;
-          remarkTouched = false;
-        }
+        snapA = a; snapB = b; remA = ra; remB = rb;
+        pairs = new Map(); // a new read of the row replaces the previous pairs
+        for (const n of nums) pairs.set(n, { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] }, manual: null });
         ready = true;
         lastRowSig = getRowSig();
-        if (!fillOnly) scheduleRemarkVerify();
+        if (!isVerifyRetry) {
+          verifyRetries = 0; remarkTouched = false; pairsTouched = false;
+          scheduleRemarkVerify();
+        }
         log(`Scrape complete · A: ${nums.map((n) => `T${n}=${a[n] || 'empty'}`).join(' / ')} · B: ${nums.map((n) => `T${n}=${b[n] || 'empty'}`).join(' / ')}`);
       } catch (e) {
         ready = false;
@@ -572,20 +564,21 @@
       }
     }
 
-    // The platform sometimes fills a Remarks textarea a moment after the row appears, which a scrape taken too early
-    // would record as empty. For about 1.6s after a scrape, look for Annotator 1 remark text the snapshot lacks and
-    // re-scrape fill-only once it shows. It stops as soon as the user types (anything new is then theirs, not a late
-    // load), and a fill-only scrape never replaces or empties a stored value.
+    // The platform sometimes finishes switching QC tabs before the row's remark text has actually loaded, so the first
+    // read can capture empty text or the previous row's leftover. For about 2.5s after a scrape, compare Annotator 1's
+    // live remarks with the snapshot and re-scrape (at most twice) if they differ. It stops for good the moment the
+    // user types, flips, or relabels, so it can only correct pairs nobody has touched. It cannot see late text on
+    // Annotator 2's tab.
     function scheduleRemarkVerify() {
       clearTimeout(verifyTimer);
       let tries = 0;
       const tick = () => {
-        if (++tries > 4) return;
+        if (++tries > 6) return;
         verifyTimer = setTimeout(async () => {
-          if (remarkTouched) return;
-          const late = ready && !scraping && !adopting && activeTabIndex() === 0
-            && scoreableTrans().some((n) => !remA[n] && readRemark(n));
-          if (late) await scrapeBoth(true);
+          if (remarkTouched || pairsTouched) return;
+          const stale = ready && !scraping && !adopting && verifyRetries < 2 && activeTabIndex() === 0
+            && scoreableTrans().some((n) => readRemark(n) !== (remA[n] || ''));
+          if (stale) { verifyRetries++; await scrapeBoth(true); }
           tick();
         }, 400);
       };
