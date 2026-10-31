@@ -100,8 +100,18 @@ annotation.html`, a reduced copy of the annotation page (seven translations,
 a simulated cascader, and a Space-to-submit counter). Trans4–7 carry lorem
 ipsum filler so the right-hand column is exercised; Trans3 is empty on
 purpose, to cover skipping empty translations. See `tests/fixtures/README.md`
-for provenance and the modelled-platform assumptions. QC Compare has no
-page-level tests, because no captured QC page exists to build one from.
+for provenance and the modelled-platform assumptions. QC Compare is covered
+by `tests/fixtures/quality_compare.html`, a reduced QC page with a two-tab
+simulator (its file name must start with `quality_` so the module starts).
+
+The specs are grouped by purpose (`scoring`, `submit-check`,
+`remark-target-selection`, `remark-writes`, `remark-mouse`, `qc-navigation`,
+`qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`,
+`capture-contract`) and tagged `@logic` (behavior), `@contract` (selector and
+fixture contracts) or `@layout` (viewport and legend). `npx playwright test
+--grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/
+test-behavior-map.md` maps every tested behavior to the tests that cover it
+and lists the behaviors that have none.
 
 `@require` has no code-splitting — every file above downloads and executes
 on every matching page load, regardless of URL. Which module is actually
@@ -441,9 +451,11 @@ QC Compare:
 - **Fixed** QC row-change detection: it read a module that no longer exists,
   so a new row was never re-scraped.
 
-Tests: 197 Playwright tests, including a new reduced QC page fixture
-(`tests/fixtures/quality_compare.html`) with a two-tab simulator. Live NOVA
-checks are listed under "Known unverified".
+Tests: 192 Playwright tests in 12 files (one more per local capture), including
+a new reduced QC page fixture (`tests/fixtures/quality_compare.html`) with a
+two-tab simulator; overlapping tests were consolidated and grouped by purpose.
+Live NOVA checks are in `PLANNING/reports/v1.5.3/live-checklist.md` and under
+"Known unverified".
 
 ### `v1.5.2` — Click-to-select Remarks and live direct editing
 

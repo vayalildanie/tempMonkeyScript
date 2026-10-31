@@ -30,6 +30,40 @@ Counts are Playwright tests as run. Baseline 96. After B2: 151 (96 + 3 escape + 
 | B4+B5 | `ef9a87e` | Preserved pair, symmetric flip-flop, manual stash, fill-only lazy-load verify, whole-unit badges, row-change fix. 21 swap tests written red first (16 failed), then green. Mutation checks: neither-case target changed to `a` failed 4 clears/edit tests; removing the stash failed the hand-edit test |
 | B6 | next commit | 3 new warning tests red (2 failed, 1 negative guard passed), then green; legend reads `Z Swaps Score + Remark`. Full suite 181/181 |
 
+## Task 6: test clean-up (`3377cee`, `4c53316`, merged `59cd597`)
+
+Subagent `agent-skills:test-engineer` (Opus, own worktree), cut off once by a usage limit and resumed. 196 -> 192 tests (193 here with the local capture), 9 -> 12 spec files; `@logic` 177, `@contract` 8, `@layout` 7. Lead verification: merge clean; `git diff 62aa500 HEAD -- src annotation-scoring-shortcuts.user.js` empty; every JS file passes `node --check`; full suite 193/193; `--grep @logic` 177/177. Five lead mutation spot-checks against the merged specs, each in the expected file and restored: Escape blur removed (3 failed in `remark-writes`), first-ArrowUp jump never spent (3 in `remark-target-selection`, including the merged table rows), gate counting 3 Points as needing a remark (9 in `submit-check`), QC neither-case target changed (6 in `qc-swap`), QC remark outline removed (3 in `qc-navigation`). The subagent's own 17 mutation checks, the list of merges, the behaviors left unmerged because equal coverage could not be proven, and the coverage gaps are in `test-behavior-map.md`.
+
+## Requirement to test map
+
+Specs live in `tests/`. Test names read `<behavior> when <condition>`; tables name their rows.
+
+| Requirement | Covered by |
+|---|---|
+| **A-GATE** (remark gate; Check Off unchanged; blocked toast) | `submit-check.spec.js` > `remark gate` (3 modes x 6 cases, no-Space-on-block, toast pairing in Label and Submit Check), `Label Check`, `Submit Check`, `empty-row auto-advance` (incl. translations rendering before the timer) |
+| **A-ESC** (Escape unfocus) | `remark-writes.spec.js` > `escape` (edit box, NOVA textarea incl. `Trans 2 Remarks`, second Escape closes, unrelated button and unrelated textarea, IME composition) |
+| **A-QUOTE** (`"text"`, one source, Note, chrome refused) | `remark-writes.spec.js` > `quoting` (12+ accept and refuse rows with exact Note tokens, selection kept on refusal), `separators` (4 incl. old `Trans N "…"`), `contract` rows `note-heading`, `note-body` |
+| **B-Z** (Score and Remark together) | `qc-swap.spec.js` > `Z swaps Score and Remark`, `Z guards and mouse` |
+| **B-FAIL** (preserved pair, flip-flop, stash, verify) | `qc-swap.spec.js` > `failsafe: the preserved pair survives clears and edits`, `rows changing under the pairs` |
+| **B-ADV** (every writing Z advances; refusals stay put) | `qc-swap.spec.js` > `Z auto-advance`, `Z refusals`, `rows changing under the pairs` (selection moved during a flip) |
+| **B-SEL** (Score and Remark outlined; badge position) | `qc-navigation.spec.js` > `selector spans Score and Remark`, `tab round trip` |
+| **B-RW** (Rewrite and whole-row Remarks removed) | `qc-navigation.spec.js` > `starting on a QC page` (legend has no Rewrite or "+ Add"); `grep -ni rewrite src` empty |
+| **B-SUITE** (QC shortcuts) | `qc-shortcuts.spec.js` > `score keys`, `label menu`, `help toggle`, `guards`; `qc-navigation.spec.js` |
+| **T-CLEAN** | `PLANNING/reports/v1.5.3/test-behavior-map.md` |
+
+## Task 7 pre-deploy checklist (lead)
+
+- [x] Every requirement maps to at least one passing test (table above).
+- [x] `npm test` green (193 here, 192 without a local capture); `node --check` clean on every JS file.
+- [x] R-A and R-B findings fixed or ruled on (sections above).
+- [x] `grep -ni rewrite src` empty; no `Trans ${` quote template in `src/remark-composer.js`.
+- [x] Version `v1.5.3` in the userscript header (`@version`, `TL.SCRIPT_VERSION`), README banner, and `release-smoke.spec.js`.
+- [x] Decision defaults applied (section above) and rulings recorded.
+- [x] Rollback point confirmed: tag `v1.5.2` at `2752748`.
+- [ ] Fast-forward `main`, tag `v1.5.3` (done after this commit).
+- [ ] Push `main` and the tag (only on the user's instruction).
+- [ ] Live checklist run by the user: `PLANNING/reports/v1.5.3/live-checklist.md`.
+
 ## Review R-A (Track A) and rulings
 
 Reviewer: `agent-skills:code-reviewer` (read-only), verdict REQUEST CHANGES, no critical defects. Fixed in `1b86e94`:
