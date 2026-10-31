@@ -95,6 +95,51 @@ function selectAcross(page, a, b) {
   }, { a, b });
 }
 
+// Builds one named selection in the page and returns its raw text.
+function makeSelection(page, key) {
+  return page.evaluate((key) => {
+    const q = (s) => document.querySelector(s);
+    const text = (n) => q(`[data-module-name="Trans${n}"] .preview-content`);
+    const noteBody = q('[data-module-key="NoteTrans"] #content');
+    const noteHead = q('[data-module-key="NoteTrans"] h1');
+    const ctx = q('[data-module-name="Context-EN"] .preview-content');
+    const r = document.createRange();
+    const toEnd = (el) => r.setEnd(el, el.childNodes.length);
+    switch (key) {
+      case 'whole': r.selectNodeContents(text(5)); break;
+      case 'part': {
+        const t = text(2).querySelector('span span').firstChild;
+        r.setStart(t, 6);
+        r.setEnd(t, 17);
+        break;
+      }
+      case 'parent-boundary': {
+        const pc = text(4);
+        r.setStart(pc, 0);
+        r.setEnd(pc.parentElement, Array.prototype.indexOf.call(pc.parentElement.childNodes, pc) + 1);
+        break;
+      }
+      case 'note-body': r.selectNodeContents(noteBody); break;
+      case 'note-heading-and-body': r.setStart(noteHead, 0); toEnd(noteBody); break;
+      case 'tagged':
+        text(6).textContent = '<content1>Tagged words here</content1>';
+        r.selectNodeContents(text(6));
+        break;
+      case 'two-translations': r.setStart(text(4), 0); toEnd(text(5)); break;
+      case 'note-and-translation': r.setStart(noteBody, 0); toEnd(text(1)); break;
+      case 'context-and-translation': r.setStart(ctx, 0); toEnd(text(1)); break;
+      case 'context-only': r.selectNodeContents(ctx); break;
+      case 'title-and-text': r.setStart(q('[data-module-name="Trans5"] .title-text'), 0); toEnd(text(5)); break;
+      case 'select-all': r.selectNodeContents(document.body); break;
+      default: throw new Error(`unknown selection ${key}`);
+    }
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return r.toString();
+  }, key);
+}
+
 const edit = (page) => page.locator('#rmd-edit');
 // A chip click or quote re-focuses #rmd-edit one animation frame later, so wait
 // for that before blurring, or the late focus lands after the blur.
@@ -144,7 +189,7 @@ test.describe('initial target', () => {
     await page.keyboard.press('q');
     await expect(page.locator('#rmd-popover')).toBeVisible();
     await expectTarget(page, 4);
-    await expectRemarks(page, { 4: `Trans 5 "${text}"`, 1: '', 2: '', 5: '' });
+    await expectRemarks(page, { 4: `"${text}"`, 1: '', 2: '', 5: '' });
   });
 });
 
@@ -519,7 +564,9 @@ test.describe('mouse selection and direct editing', () => {
 
 test.describe('row change and re-render while open', () => {
   const lateScoring = { ...ALL_EMPTY, 1: '3 Points', 2: '3 Points' }; // initial target is Trans4
+  // Note is the row-signature source, so a new row changes its text too.
   const nextRow = (page) => page.evaluate(() => {
+    document.querySelector('[data-module-key="NoteTrans"] #content').textContent = 'A brand new row note.';
     document.querySelector('[data-module-name="Trans1"] .preview-content').textContent = 'A brand new row, different source text.';
   });
 
@@ -556,6 +603,7 @@ test.describe('row change and re-render while open', () => {
     await page.evaluate(() => {
       const ta = document.querySelector('[data-module-name="Trans4 Remarks"] textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, 'new row remark');
+      document.querySelector('[data-module-key="NoteTrans"] #content').textContent = 'A brand new row note.';
       document.querySelector('[data-module-name="Trans1"] .preview-content').textContent = 'A brand new row, different source text.';
     });
     await expect(edit(page)).toHaveValue('new row remark');
@@ -587,7 +635,7 @@ test.describe('quoting', () => {
     await expectTarget(page, 5);
     const text = await selectTrans(page, 2);
     await page.keyboard.press('q');
-    await expectRemarks(page, { 1: '', 2: '', 4: '', 5: `Trans 2 "${text}"` });
+    await expectRemarks(page, { 1: '', 2: '', 4: '', 5: `"${text}"` });
     await expectTarget(page, 5);
   });
 
@@ -608,7 +656,7 @@ test.describe('quoting', () => {
     await openComposer(page);
     await selectAcross(page, 4, 5);
     await page.keyboard.press('q');
-    await expect(page.locator('#rmd-hint')).toContainText('single translation');
+    await expect(page.locator('#rmd-hint')).toContainText('one translation or the Note');
     await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
     await expect(edit(page)).toHaveValue('');
   });
@@ -630,6 +678,141 @@ test.describe('quoting', () => {
     await expect(edit(page)).toHaveValue('');
     await expectTarget(page, 2);
     expect(await page.locator('.rmd-clickable-title').count()).toBe(0);
+  });
+
+  // Rows: [label, selection key, accepted?]. An accepted quote is exactly
+  // "<selected text>" with no source prefix; a refused one writes nothing.
+  const sources = [
+    ['a whole translation', 'whole', true],
+    ['part of a translation', 'part', true],
+    ['a whole translation ending on the parent of .preview-content', 'parent-boundary', true],
+    ['Note body text', 'note-body', true],
+    ['Note heading and body together', 'note-heading-and-body', true],
+    ['text wrapped in an annotation tag', 'tagged', true],
+    ['Trans4 to Trans5', 'two-translations', false],
+    ['Note plus Trans1', 'note-and-translation', false],
+    ['Context-EN plus Trans1', 'context-and-translation', false],
+    ['Context-EN only', 'context-only', false],
+    ['a title plus its translation text', 'title-and-text', false],
+    ['the whole page (select all)', 'select-all', false],
+  ];
+  for (const [label, key, accepted] of sources) {
+    test(`${accepted ? 'quotes' : 'refuses'} ${label}`, async ({ page }) => {
+      await setScores(page, ALL_EMPTY);
+      await openComposer(page);
+      await expectTarget(page, 1);
+      const raw = await makeSelection(page, key);
+      await page.keyboard.press('q');
+      if (accepted) {
+        const expected = key === 'tagged' ? 'Tagged words here' : raw.trim();
+        await expectRemarks(page, { 1: `"${expected}"`, 2: '', 4: '', 5: '' });
+        await expect(edit(page)).toHaveValue(`"${expected}"`);
+      } else {
+        await expect(page.locator('#rmd-hint')).toContainText('one translation or the Note');
+        await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
+        await expect(edit(page)).toHaveValue('');
+      }
+      await expectTarget(page, 1);
+    });
+  }
+
+  test.describe('separators', () => {
+    const chipText = (page) => page.locator('#rmd-popover .rmd-chip').first().getAttribute('data-chip');
+
+    test.beforeEach(async ({ page }) => {
+      await setScores(page, ALL_EMPTY);
+    });
+
+    test('a chip after a quote is joined with ": "', async ({ page }) => {
+      await openComposer(page);
+      const q = (await makeSelection(page, 'part')).trim();
+      await page.keyboard.press('q');
+      await blur(page);
+      const chip = await chipText(page);
+      await page.locator('#rmd-popover .rmd-chip').first().click();
+      await expect(edit(page)).toHaveValue(`"${q}": ${chip}`);
+    });
+
+    test('a quote after a chip is joined with two spaces', async ({ page }) => {
+      await openComposer(page);
+      const chip = await chipText(page);
+      await page.locator('#rmd-popover .rmd-chip').first().click();
+      await blur(page);
+      const q = (await makeSelection(page, 'part')).trim();
+      await page.keyboard.press('q');
+      await expect(edit(page)).toHaveValue(`${chip}  "${q}"`);
+    });
+
+    test('a quote after a quote is joined with two spaces', async ({ page }) => {
+      await openComposer(page);
+      const a = (await makeSelection(page, 'part')).trim();
+      await page.keyboard.press('q');
+      await blur(page);
+      const b = (await makeSelection(page, 'note-body')).trim();
+      await page.keyboard.press('q');
+      await expect(edit(page)).toHaveValue(`"${a}"  "${b}"`);
+    });
+
+    test('a pre-v1.5.3 Trans N quote still counts as a quote before a chip', async ({ page }) => {
+      await pageEdit(page, 1, 'Trans 2 "x"');
+      await openComposer(page);
+      await expectTarget(page, 1);
+      const chip = await chipText(page);
+      await page.locator('#rmd-popover .rmd-chip').first().click();
+      await expect(edit(page)).toHaveValue(`Trans 2 "x": ${chip}`);
+    });
+  });
+});
+
+test.describe('escape', () => {
+  const focusedId = (page) => page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) return 'BODY';
+    const mod = el.closest && el.closest('[data-module-name]');
+    return el.id || (mod && mod.getAttribute('data-module-name')) || el.tagName;
+  });
+
+  test('the first Escape blurs #rmd-edit and keeps the window, text, and target', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await expectTarget(page, 1);
+    await edit(page).click();
+    await page.keyboard.type('draft');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeVisible();
+    await expect.poll(() => focusedId(page)).toBe('BODY');
+    await expect(edit(page)).toHaveValue('draft');
+    await expectRemarks(page, { 1: 'draft' });
+    await expectTarget(page, 1);
+  });
+
+  test('the first Escape blurs a NOVA Remarks textarea, including Trans 2 Remarks', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    const ta = page.locator('[data-module-name="Trans 2 Remarks"] textarea').first();
+    await ta.click();
+    await expectTarget(page, 2);
+    await page.keyboard.type('typed in page');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeVisible();
+    await expect.poll(() => focusedId(page)).toBe('BODY');
+    await expectRemarks(page, { 2: 'typed in page' });
+    await expectTarget(page, 2);
+  });
+
+  test('a second Escape closes the window, and an unrelated focus still closes on the first', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await edit(page).click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeHidden();
+
+    await openComposer(page);
+    await page.locator('#fx-submit').focus();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeHidden();
   });
 });
 

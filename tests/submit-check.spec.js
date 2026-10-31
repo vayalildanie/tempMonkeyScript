@@ -151,12 +151,14 @@ test.describe('mouse override', () => {
 });
 
 test.describe('empty-row auto-advance (Submit Check)', () => {
-  // Moves the page to a row with nothing to score: changes Trans1 (the row
-  // signature source) and empties every translation.
+  // Moves the page to a new row. Note is the row-signature source, so its text
+  // changes with every row, as on the real page.
   const toEmptyRow = (page) => page.evaluate(() => {
+    document.querySelector('[data-module-key="NoteTrans"] #content').textContent = 'Empty row note.';
     document.querySelectorAll('.preview-content').forEach((el) => { el.textContent = ''; });
   });
   const toRowWithText = (page, text) => page.evaluate((t) => {
+    document.querySelector('[data-module-key="NoteTrans"] #content').textContent = 'Next row note.';
     document.querySelectorAll('.preview-content').forEach((el) => { el.textContent = ''; });
     document.querySelector('[data-module-name="Trans1"] .preview-content').textContent = t;
   }, text);
@@ -200,6 +202,91 @@ test.describe('empty-row auto-advance (Submit Check)', () => {
     const f = await fixture(page);
     expect(f.submitCount).toBe(0);
     expect(f.spaceEvents).toEqual([]);
+  });
+});
+
+test.describe('remark gate', () => {
+  // Set the displayed scores directly; '' = unscored.
+  const setScores = (page, scores) => page.evaluate((map) => {
+    Object.keys(map).forEach((k) => {
+      const selector = document.querySelector(`[data-module-name="Trans${k} Score"] .ant-select-selector`);
+      let item = selector.querySelector('.ant-select-selection-item');
+      if (!item) {
+        item = document.createElement('span');
+        item.className = 'ant-select-selection-item';
+        selector.appendChild(item);
+      }
+      item.textContent = map[k];
+    });
+  }, scores);
+  // A page-side Remarks value, as NOVA's own field would hold it.
+  const setRemarks = (page, remarks) => page.evaluate((map) => {
+    Object.keys(map).forEach((k) => {
+      const mod = Array.from(document.querySelectorAll('[data-module-name]'))
+        .find((m) => new RegExp(`^Trans ?${k} Remarks$`).test(m.getAttribute('data-module-name')));
+      const ta = mod.querySelector('textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, map[k]);
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }, remarks);
+  const ALL_THREE = { 1: '3 Points', 2: '3 Points', 4: '3 Points', 5: '3 Points', 6: '3 Points', 7: '3 Points' };
+
+  // Rows: [label, score overrides, remarks, blocked?]. The Trans2 rows read the
+  // spaced "Trans 2 Remarks" module, so they also cover that spelling.
+  const cases = [
+    ['a non-3 score with an empty remark', { 2: '2 Points / Grammar' }, {}, true],
+    ['a non-3 score with a whitespace-only remark', { 2: '2 Points / Grammar' }, { 2: '  \n ' }, true],
+    ['a non-3 score with a remark', { 2: '2 Points / Grammar' }, { 2: 'needs a fix' }, false],
+    ['Confusing with an empty remark', { 4: 'Confusing' }, {}, true],
+    ['3 Points with an empty remark', {}, {}, false],
+    ['a missing label with a remark present', { 4: '2 Points' }, { 4: 'has a remark' }, true],
+  ];
+
+  async function expectOutcome(page, mode, blocked) {
+    const prevented = await enterPrevented(page);
+    const f = await fixture(page);
+    const downs = f.spaceEvents.filter((e) => e.type === 'keydown').length;
+    if (mode === 'off') {
+      expect(prevented).toEqual([false]);
+      expect(f.spaceEvents).toEqual([]);
+      expect(f.submitCount).toBe(0);
+    } else if (blocked) {
+      expect(prevented).toEqual([true]);
+      expect(f.spaceEvents).toEqual([]); // no keydown and no keyup
+      expect(f.submitCount).toBe(0);
+    } else if (mode === 'label') {
+      expect(prevented).toEqual([false]);
+      expect(f.submitCount).toBe(0);
+    } else {
+      expect(prevented).toEqual([true]);
+      expect(downs).toBe(1);
+      expect(f.submitCount).toBe(1);
+    }
+  }
+
+  for (const mode of ['label', 'submit', 'off']) {
+    test.describe(`${mode} mode`, () => {
+      for (const [label, scores, remarks, blocked] of cases) {
+        test(`${mode === 'off' ? 'ignores' : blocked ? 'blocks' : 'passes'} ${label}`, async ({ page }) => {
+          await cycleTo(page, mode);
+          await setScores(page, { ...ALL_THREE, ...scores });
+          await setRemarks(page, remarks);
+          await page.keyboard.press('Enter');
+          await expectOutcome(page, mode, blocked);
+        });
+      }
+    });
+  }
+
+  test('the blocked toast names each translation and whether its label or remark is missing', async ({ page }) => {
+    await cycleTo(page, 'submit');
+    await setScores(page, { ...ALL_THREE, 2: '2 Points / Grammar', 4: '2 Points' });
+    await page.keyboard.press('Enter');
+    const toast = page.locator('#tl-toast');
+    await expect(toast).toContainText('Trans2');
+    await expect(toast).toContainText('remark');
+    await expect(toast).toContainText('Trans4');
+    await expect(toast).toContainText('label');
   });
 });
 

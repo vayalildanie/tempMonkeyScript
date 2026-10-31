@@ -25,6 +25,13 @@ the structural details below as unverified against a fresh dump.
 - The capture's Remarks spelling. Trans2 is `Trans 2 Remarks` (with a space).
   The others are `TransN Remarks`. Scores are `TransN Score`. Translation
   text modules are `TransN`.
+- v1.5.3: a `source` column with `Context-EN` (key `Text`, same shape as a
+  translation) and `Note` (key `NoteTrans`). Note's shape follows
+  `user 1 double blind html.txt`: `.module-title .title-text` = `Note`, then
+  `.ant-spin-container` holding an `h1` heading and
+  `.refactor-content .content-box #content`. Note text is not in
+  `.preview-content`. Because every module's row signature reads Note first,
+  tests that simulate a row change must change Note's `#content` text too.
 
 ## What was redacted or replaced
 
@@ -40,8 +47,9 @@ the structural details below as unverified against a fresh dump.
 - Vue scoped `data-v-*` attributes and dumped `[object Object]` props.
 - The userscript highlight class `tl-active-score` that the capture picked up
   from a live session. The fixture starts with every cascader closed.
-- Page chrome outside the translation modules (nav, content-type, note). The
-  left column is Trans1–Trans3; the right column is Trans4–Trans7.
+- Page chrome outside the translation modules (nav, content-type). The
+  left column is Trans1–Trans3; the right column is Trans4–Trans7. Note and
+  Context-EN text is lorem ipsum.
 
 ## Simulator
 
