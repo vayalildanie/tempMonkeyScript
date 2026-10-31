@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<!--
+  QC Compare fixture (v1.5.3 B0). Reduced page for Playwright; not the live
+  NOVA page and it never submits anything.
+
+  The file name starts with "quality_" on purpose: QC Compare only starts when
+  location.href matches /\/quality_/, and the file:// URL of this page does.
+
+  Provenance: shaped after two user-supplied outerHTML captures of one
+  double-blind QC row (not checked into this repo):
+    C:\Users\Admin\Documents\projects\NOVA\user 1 double blind html.txt  (Annotator 1 tab active)
+    C:\Users\Admin\Documents\projects\NOVA\user 2 double blind html.txt  (Annotator 2 tab active)
+
+  Kept from the captures:
+  - Tab strip .mutiple-container > .tabs-group > .tab.btn-size (active on the
+    current one), labels 标注1 / 标注2.
+  - Verdict buttons inside .quality-container: .right-btn ("正确 1") and
+    .wrong-btn ("错误 3"), the selected one carrying .active.
+  - Modules Content Type, Context-EN (key Text), Note (key NoteTrans: title,
+    .ant-spin-container > h1 + .refactor-content .content-box #content), and
+    for N = 1..7: TransN (Text, .preview-content), TransN Score
+    (LabelsCascade), TransN Remarks (TextLabels). Trans 2's Remarks keeps the
+    capture's spelling "Trans 2 Remarks" (with a space).
+  - Nested outer/inner font[data-module-name] wrappers. The score cascader
+    markup is the same shape as tests/fixtures/annotation.html so
+    annotation-sim.js drives it unchanged.
+  - No Rewrite module and no whole-row Remarks module (neither exists in the
+    captures).
+
+  Redacted or replaced:
+  - All task text (source, note, context, translations, remarks, scores) is
+    lorem ipsum or seeded per test; Trans3's .preview-content is empty so it
+    is not scoreable (in the captures Trans4-7 were the empty ones).
+  - Element ids (except the Note's #content and fixture-local fx-select-N),
+    data-module-path, data-module-config-id, Vue data-v-* attributes,
+    [object Object] props, data-URI / CDN images, scripts, styles, tracking.
+  - Page chrome outside the tabs, verdict buttons and modules (nav bar,
+    header 备注 bar, form items).
+
+  Behaviour: annotation-sim.js (cascader) and quality-sim.js (tab switching,
+  per-tab score/remark datasets, seeding) — see quality-sim.js.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QC compare fixture</title>
+  <style>
+    body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #161a6a; }
+    .mutiple-container { display: flex; align-items: center; gap: 16px; padding: 220px 16px 8px; }
+    .tabs-group { display: flex; gap: 4px; }
+    .tab { padding: 4px 12px; border: 1px solid #d9d9e3; border-radius: 6px; cursor: pointer; }
+    .tab.active { background: #e7f5ff; border-color: #1c7ed6; }
+    .quality-container .active { background: #ebfbee; }
+    .workbench { display: flex; gap: 16px; padding: 16px; align-items: flex-start; }
+    .col { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 8px; }
+    .preview-content { min-height: 48px; }
+    .ant-select { position: relative; }
+    .ant-select-dropdown { position: absolute; z-index: 20; background: #fff; border: 1px solid #d9d9e3; box-shadow: 0 6px 16px rgba(0,0,0,.12); }
+    .ant-cascader-menu { list-style: none; margin: 0; padding: 4px 0; min-width: 160px; max-height: 240px; overflow: auto; }
+    .ant-cascader-menus { display: flex; }
+    .ant-cascader-menu-item { padding: 5px 12px; cursor: pointer; }
+    .ant-cascader-menu-item:hover { background: #f5f5f5; }
+    .ant-select-selection-item { display: block; padding: 4px 8px; }
+    .ant-select-clear {
+      position: absolute; top: 8px; right: 8px; z-index: 2;
+      width: 16px; height: 16px; line-height: 16px; text-align: center;
+      display: none; cursor: pointer;
+    }
+    .ant-select-has-value .ant-select-clear { display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="mutiple-container" opensubmit="true">
+    <div class="tabs-group">
+      <div class="tab btn-size active"><div class="relative">标注1 </div></div>
+      <div class="tab btn-size"><div class="relative">标注2 </div></div>
+    </div>
+    <div class="quality-container px-0">
+      <button class="ant-btn ant-btn-default right-btn btn-size" type="button"><span>正确 1</span></button>
+      <button class="ant-btn ant-btn-default wrong-btn btn-size" type="button"><span>错误 3</span></button>
+    </div>
+  </div>
+  <div class="workbench" data-module-key="LayoutThreeColumn">
+    <div class="col" data-column="source">
+<font class="" data-module-key="Text" data-module-name="Content Type" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Content Type">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Content Type</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Lorem ipsum</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Context-EN" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Context-EN">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Context-EN</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="NoteTrans" data-module-name="Note" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="NoteTrans" data-module-name="Note">
+<div class="w-full h-full bg-[#ffffff] flex flex-col">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Note</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="flex-1 overflow-auto pb-[20px]">
+<div class="ant-spin-nested-loading css-1p3hq3p">
+<!---->
+<div class="ant-spin-container">
+<div class="w-full px-[20px]">
+<div class="w-full text-[#161A6A] flex flex-col gap-[8px]">
+<h1 class="text-[16px] font-[500] leading-[24px]"><span><font>Quis autem vel eum iure reprehenderit</font></span></h1>
+<div class="refactor-content is-expand leading-[22px]">
+<div class="content-box">
+<div id="content"><span><font>At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti.</font></span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+    </div>
+    <div class="col" data-column="left">
+<font class="" data-module-key="Text" data-module-name="Trans1" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans1">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans1</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans1 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans1 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans1 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-1" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-1_list" aria-autocomplete="list" aria-controls="fx-select-1_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans1 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans1 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans1 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Trans2" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans2">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans2</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans2 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans2 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans2 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-2" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-2_list" aria-autocomplete="list" aria-controls="fx-select-2_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans 2 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans 2 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans 2 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Trans3" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans3">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans3</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;"></div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans3 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans3 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans3 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-3" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-3_list" aria-autocomplete="list" aria-controls="fx-select-3_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans3 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans3 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans3 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+    </div>
+    <div class="col" data-column="right">
+<font class="" data-module-key="Text" data-module-name="Trans4" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans4">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans4</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans4 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans4 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans4 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-4" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-4_list" aria-autocomplete="list" aria-controls="fx-select-4_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans4 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans4 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans4 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Trans5" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans5">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans5</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans5 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans5 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans5 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-5" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-5_list" aria-autocomplete="list" aria-controls="fx-select-5_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans5 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans5 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans5 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Trans6" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans6">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans6</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans6 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans6 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans6 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-6" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-6_list" aria-autocomplete="list" aria-controls="fx-select-6_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans6 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans6 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans6 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="Text" data-module-name="Trans7" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="Text" data-module-name="Trans7">
+<div class="text-container">
+<div class="annotation-area">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans7</span>
+<!---->
+<!---->
+</div>
+<div class="tools-container">
+<div>
+<img class="w-[16px] h-[16px] cursor-pointer" src="" alt="图标" data-listened="true">
+</div>
+</div>
+</div>
+<!---->
+<div class="container preview-content px-[20px] pb-[20px]" style="color: rgb(22, 26, 106); font-weight: normal;">
+<span>
+<span>Neque porro quisquam est qui dolorem ipsum quia dolor sit amet, consectetur, adipisci.</span>
+</span>
+</div>
+</div>
+<!---->
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="LabelsCascade" data-module-name="Trans7 Score" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="LabelsCascade" data-module-name="Trans7 Score">
+<div class="cascade-container">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans7 Score</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="labels-main">
+<!---->
+<div class="nova-cascader" show-search="false" multiple="false" changeonselect="true" placeholder="请选择标签">
+<div popupclassname="labels-cascader-with-hidden-checkbox nova-cascader-popup nova-cascader-popup-single" class="ant-select ant-cascader css-1p3hq3p ant-select-single ant-select-allow-clear ant-select-show-arrow" style="width: 100%;">
+<!---->
+<div class="ant-select-selector">
+<span class="ant-select-selection-search">
+<input type="search" id="fx-select-7" class="ant-select-selection-search-input" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="fx-select-7_list" aria-autocomplete="list" aria-controls="fx-select-7_list" readonly="" unselectable="on" value="" style="opacity: 0;">
+</span>
+<!---->
+<span class="ant-select-selection-placeholder">请选择标签</span>
+</div>
+<!---->
+<span class="ant-select-arrow" unselectable="on" aria-hidden="true" style="user-select: none;">
+<img src="" class="cascader-arrow-icon" data-listened="true">
+<!---->
+</span>
+<!---->
+</div>
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+<font class="" data-module-key="TextLabels" data-module-name="Trans7 Remarks" style="position: relative; max-height: 100%;">
+<!---->
+<font data-module-key="TextLabels" data-module-name="Trans7 Remarks">
+<div class="text-labels">
+<div class="module-title" style="background-color: transparent; border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; border-radius: 0px;">
+<div class="title-box">
+<span class="title-text">Trans7 Remarks</span>
+<!---->
+<!---->
+</div>
+<!---->
+</div>
+<div class="whole-mode">
+<div class="region-edit-row">
+<div class="ant-input-textarea ant-input-textarea-show-count ant-input-textarea-show-count text-input css-1p3hq3p" data-count="0">
+<textarea class="ant-input css-1p3hq3p" placeholder="请输入..." style="overflow-y: hidden; height: 22px; resize: none; min-height: 22px; max-height: 154px;"></textarea>
+<!---->
+</div>
+<!---->
+</div>
+</div>
+</div>
+<!---->
+</font>
+<!---->
+<!---->
+</font>
+    </div>
+  </div>
+  <script src="annotation-sim.js"></script>
+  <script src="quality-sim.js"></script>
+</body>
+</html>
