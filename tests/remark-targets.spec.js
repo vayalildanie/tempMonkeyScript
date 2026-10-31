@@ -136,7 +136,7 @@ function makeSelection(page, key) {
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(r);
-    return r.toString();
+    return sel.toString();
   }, key);
 }
 

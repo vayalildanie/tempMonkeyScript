@@ -277,7 +277,7 @@
     function separatorFor(tail, newKind) {
       const t = tail.replace(/\s+$/, '');
       if (t === '') return '';
-      const prevKind = /Trans\s+\d+(\s+"[^"]*")?$/.test(t) ? 'quote' : 'phrase';
+      const prevKind = /"[^"]*"$/.test(t) ? 'quote' : 'phrase'; // a trailing "…" is a quote (also the old Trans N "…" form)
       if (prevKind === 'quote' && newKind === 'phrase') return ': ';
       if (prevKind === 'phrase' && newKind === 'phrase') return ', ';
       if (newKind === 'quote') return '  ';
@@ -288,7 +288,7 @@
     // into NOVA's real (React-controlled) Remarks field via the native
     // setter, so both stay in sync. Shared by every token producer: the
     // chip palette's click handler, and the quote flow (tryQuoteSelection,
-    // below), which builds its token as `Trans N "<selected text>"`.
+    // below), which builds its token as `"<selected text>"`.
     function appendToken(token, kind) {
       if (!previewEl) return;
       const cur = previewEl.value.replace(/\s+$/, '');
@@ -463,88 +463,68 @@
       setPreview(ta.value);
     }
 
-    // Q: turn the current (plain, native) text selection into an excerpt
-    // quote — Trans N "raw selected text" — with no word-boundary snapping;
-    // this is exactly what the browser selected, taken as-is. Deliberately
-    // a two-step action (select, then press Q) rather than firing the
-    // instant you finish dragging, so quoting an excerpt is a decision you
-    // make on purpose, not something that can happen by accident while
-    // reading. The selection must sit entirely within one translation — a
-    // selection spanning more than one is rejected with a hint rather than
-    // guessing which translation was meant. With no selection at all, Q
-    // instead puts the caret at the end of the composer box (with a hint).
-    //
-    // Containment is checked against the TransN container itself (via
-    // Range.intersectsNode), not `.preview-content` — a straight anchor/
-    // focus `.closest('.preview-content')` check (pre-v1.3.3) rejected the
-    // common case of selecting an *entire* translation, because dragging
-    // past the last character (or releasing in the blank space below the
-    // last line) is a real Selection/Range quirk that resolves the boundary
-    // to `.preview-content`'s parent rather than a node inside it, and
-    // `.closest()` only ever walks upward from where the boundary landed.
-    // Checking which TransN container(s) the range intersects is forgiving
-    // about exactly where within the block the boundary resolved to, while
-    // still refusing a selection that actually spans two translations.
     // ---------- Quoting a selection (Q key, wired in onKeyDown below) ----------
-    // Flow: read the current browser selection -> confirm it lands inside
-    // exactly one Trans N module -> build a `Trans N "<selected text>"`
-    // token via appendToken() above -> clear the selection so it doesn't
-    // linger highlighted after the quote is inserted.
+    // Q turns the current native text selection into `"selected text"` (no
+    // source prefix) and appends it to the highlighted remark box. It is a
+    // deliberate two-step (select, then Q), never fired by the selection
+    // itself. With no selection, Q puts the caret in the composer box.
     //
-    // Known defects, documented here but not fixed in v1.4.1:
-    //   - `text` is interpolated into the token unescaped (see the
-    //     `Trans ${transNum} "${text}"` line below) — a selection that
-    //     itself contains a `"` character produces a malformed token.
-    //   - No guard against inserting the same quote twice: pressing Q
-    //     twice on an unchanged/overlapping selection appends the token
-    //     twice.
-    //   - Multi-line selections keep their raw newlines inside the token
-    //     (only leading/trailing whitespace is trimmed), so a
-    //     multi-paragraph quote reads as a messy multi-line remark.
+    // A selection is only quoted when ALL of its text lies inside exactly one
+    // source element: a translation's `.preview-content` or the Note body.
+    // Anything wider (Ctrl-A, two translations, Note plus a translation,
+    // Context-EN, a title plus its text) is refused and writes nothing.
+    // Known gaps: text containing `"` is not escaped, pressing Q twice on the
+    // same selection appends twice, and multi-line selections keep their
+    // internal newlines.
+    function quoteRoots() {
+      const roots = [];
+      document.querySelectorAll('[data-module-name]').forEach((mod) => {
+        if (Utils.transNumFromModuleName(mod) === null) return;
+        mod.querySelectorAll('.preview-content').forEach((el) => roots.push(el));
+      });
+      document.querySelectorAll('[data-module-key="NoteTrans"] .ant-spin-container').forEach((el) => roots.push(el));
+      const unique = Array.from(new Set(roots));
+      return unique.filter((r) => !unique.some((o) => o !== r && o.contains(r))); // nested wrappers count once
+    }
+
+    const quoteNorm = (s) => Utils.stripAnnotationTags(String(s)).replace(/\s+/g, ' ').trim();
+
+    // True when the range's text belongs to one quotable root and nothing else.
+    // Each intersecting root is measured through a copy of the range clamped to
+    // that root, so a selection that ends in blank space after a root (a
+    // boundary on the root's parent) still counts as inside it.
+    function isSingleSourceSelection(range) {
+      const inside = [];
+      for (const root of quoteRoots()) {
+        if (!range.intersectsNode(root)) continue;
+        const clamped = document.createRange();
+        clamped.selectNodeContents(root);
+        if (clamped.compareBoundaryPoints(Range.START_TO_START, range) < 0) clamped.setStart(range.startContainer, range.startOffset);
+        if (clamped.compareBoundaryPoints(Range.END_TO_END, range) > 0) clamped.setEnd(range.endContainer, range.endOffset);
+        const text = quoteNorm(clamped.toString());
+        if (text) inside.push(text);
+      }
+      return inside.length === 1 && inside[0] === quoteNorm(range.toString());
+    }
+
     function tryQuoteSelection() {
       const selObj = window.getSelection();
-      // Same tag-stripping rule as the copy-icon fix (v1.4.4,
-      // Utils.stripAnnotationTags): a selection that starts or ends at a
-      // translation's very edge can catch the wrapping MT segment tag
-      // (`<content1>`, `</content1>`, etc.) along with the real text, so run
-      // the raw selection through the same helper before anything else.
+      // The same tag-stripping rule as the copy-icon fix: a selection at a
+      // translation's very edge can catch its wrapping `<content1>` tag.
       const text = Utils.stripAnnotationTags(selObj ? selObj.toString() : '').trim();
       if (!text) {
-        // Nothing selected — most likely right after a quote just cleared
-        // the selection. Put the cursor in the composer box so typing
-        // continues there, rather than just leaving a hint and doing nothing.
+        // Nothing selected: put the cursor in the composer box so typing
+        // continues there.
         focusEditEnd();
-        setHint('Nothing selected — jumped into the Remark Options box. Select text in a translation first to quote it.');
+        setHint('Nothing selected — jumped into the Remark Options box. Select text in a translation or the Note first to quote it.');
         return false;
       }
-      const range = selObj.rangeCount ? selObj.getRangeAt(0) : null;
-      if (!range) return false;
-      let transNum = null;
-      const mods = document.querySelectorAll('[data-module-name]');
-      for (const mod of mods) {
-        const n = Utils.transNumFromModuleName(mod);
-        if (n === null || !range.intersectsNode(mod)) continue;
-        // The platform can render more than one element sharing the same
-        // `[data-module-name="TransN"]` for a single translation — every
-        // other reader of this attribute in the codebase already accounts
-        // for that by grabbing only the first match via `querySelector`
-        // (see Utils.transHasText, scoring-shortcuts.js, and the fallback
-        // a few lines below in this same file). This loop uses
-        // `querySelectorAll` instead (it has to, to detect a genuinely
-        // cross-translation selection), so it must compare the NUMBER, not
-        // just whether a second match happened — otherwise a selection
-        // that intersects two same-numbered duplicate nodes for one
-        // translation was wrongly read as touching two different
-        // translations and always bailed with "Selection must stay inside
-        // a single translation," even for a selection that never left one.
-        if (transNum !== null && n !== transNum) { transNum = null; break; } // touches a second, different translation → ambiguous, bail
-        transNum = n;
-      }
-      if (transNum === null) {
-        setHint('Selection must stay inside a single translation.');
+      const range = selObj.rangeCount === 1 ? selObj.getRangeAt(0) : null;
+      if (!range || !isSingleSourceSelection(range)) {
+        setHint('Select text inside one translation or the Note to quote it.');
         return false;
       }
-      appendToken(`Trans ${transNum} "${text}"`, 'quote');
+      appendToken(`"${text}"`, 'quote');
       if (selObj.removeAllRanges) selObj.removeAllRanges();
       return true;
     }
@@ -974,6 +954,14 @@
     // Keyboard
     // ====================================================================
 
+    // Our edit box, or the textarea of a NOVA TransN Remarks module.
+    function inRemarkBox(el) {
+      if (!el || el.tagName !== 'TEXTAREA') return false;
+      if (el === previewEl) return true;
+      const mod = el.closest && el.closest('[data-module-name]');
+      return Utils.transNumFromModuleName(mod, ' Remarks') !== null;
+    }
+
     function onKeyDown(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return; // never touch modifier combos — also absorbs a bare Alt press, a no-op now that its check trigger has been removed
 
@@ -983,7 +971,11 @@
       }
 
       if (e.key === 'Escape') {
-        if (active) { e.preventDefault(); exit(); }
+        if (!active) return;
+        e.preventDefault();
+        // A focused remark box is un-focused first; the next Escape closes.
+        if (inRemarkBox(document.activeElement)) document.activeElement.blur();
+        else exit();
         return;
       }
 
