@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.5.2
+// @version      1.5.3
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,21 @@
 // ==/UserScript==
 
 /*
+ * v1.5.3, annotation stage (Remark Composer): Label Check and Submit Check
+ * also hold Enter when a populated, fully labelled translation scored below
+ * 3 Points has an empty Remarks box, and the blocked toast is back, naming each
+ * translation and whether its label or remark is missing. The first Esc takes
+ * focus off a Remarks box before the next one closes the window. Q now writes
+ * "selected text" with no Trans N prefix, accepts the Note field, and refuses
+ * any selection that is not entirely inside one translation or the Note.
+ *
+ * v1.5.3, QC Compare: Z flips a translation's Score and Remark together
+ * between the two annotators' preserved originals (so it keeps working after
+ * either side is cleared) and then advances; the selector outlines Score and
+ * Remarks together; badges compare the whole unit; the 3 Points warning is
+ * per translation. Rewrite and the whole-row Remarks code are removed, and a
+ * new row is now actually detected (the old signature module no longer exists).
+ *
  * v1.5.2 adds click-to-select for eligible Remarks while Remark Options is
  * open. Editing a NOVA Remarks textarea selects it and mirrors its text into
  * the popover without stealing focus. Existing arrow eligibility is unchanged.
@@ -158,7 +173,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.5.2';
+  TL.SCRIPT_VERSION = 'v1.5.3';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);

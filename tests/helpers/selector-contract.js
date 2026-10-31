@@ -41,6 +41,27 @@ const contract = [
     min: 1,
     why: 'Remark Composer writes into each TransN Remarks textarea',
   },
+  {
+    id: 'note-module',
+    kind: 'module',
+    pattern: '^Note$',
+    min: 1,
+    why: 'Remark Composer quotes from the Note field and every module reads its text as the row signature',
+  },
+  {
+    id: 'note-heading',
+    kind: 'selector',
+    selector: '[data-module-key="NoteTrans"] h1',
+    min: 1,
+    why: 'the Note heading is one half of the single quotable Note source (the other is the body)',
+  },
+  {
+    id: 'note-body',
+    kind: 'selector',
+    selector: '[data-module-key="NoteTrans"] .refactor-content .content-box',
+    min: 1,
+    why: 'Q accepts a Note selection only inside the Note heading and this body, never the Collapse control or picture list',
+  },
   ...TRANS.flatMap((n) => [
     { id: `trans${n}-text-module`, kind: 'module', pattern: `^Trans ?${n}$`, min: 1, why: `Trans${n} source text module` },
     { id: `trans${n}-score-module`, kind: 'module', pattern: `^Trans ?${n} Score$`, min: 1, why: `Trans${n} Score module` },

@@ -3,6 +3,12 @@
 Design specs, implementation plans, and execution reports for tempMonkeyScript.
 Nothing here is loaded by the userscript.
 
+## Proposed — Submit Check remark gate
+
+| Document | What it is |
+|---|---|
+| `specs/2026-10-29-submit-check-non3-remarks-design.md` | Proposed likely `v1.5.3`: hold submission when a populated non-3 score has an empty remark, make Escape unfocus a selected remark textbox, and allow `Q` to quote the left Note field. Not approved and not on `main`. |
+
 ## v1.5.2 — remark click selection
 
 | Document | What it is |
