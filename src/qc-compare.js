@@ -68,7 +68,8 @@
     let scraping = false;        // currently switching tabs to scrape (don't render badges now, or Annotator 2's value gets rendered as Annotator 1)
     let adopting = false;        // currently adopting/writing a value (driving the cascader; don't let the observer mis-render now)
     let ready = false;           // scraped successfully at least once
-    let lastRowSig = '';         // row signature; re-scrape on a row change
+    let lastRowSig = '';         // signature of the row the pairs were read from; a different one means the pairs are stale
+    let scrapeFailed = false;    // the last full scrape failed (lets the next row change retry even though nothing is ready)
     let diffNums = [];           // trans numbers currently disagreeing (for the summary count)
     let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
     let helpOpen = true;         // whether the panel help text is expanded; persisted (v1.4.2), defaults to expanded on a brand-new install
@@ -287,6 +288,7 @@
       if (n == null) { setCursorStatus('No translation selected'); return false; }
       if (scraping || adopting || !ready) return false;
       if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return false; }
+      if (getRowSig() !== lastRowSig) { setCursorStatus('The row just changed — wait a moment, then press again'); return false; } // pairs are for the previous row
       const pair = pairs.get(n);
       if (!pair) return false;
       const live = readUnit(n);
@@ -531,6 +533,7 @@
       const tabs = getTabs();
       if (tabs.length < 2) { ready = false; log('Only one annotator — nothing to compare'); setSummary('Only one annotator — nothing to compare.'); return; }
       scraping = true;
+      const sigAtStart = getRowSig(); // the row being read; a change while reading is then seen as a new row afterwards
       clearBadges();
       setSummary('Loading Annotator 2…');
       try {
@@ -548,16 +551,20 @@
         pairs = new Map(); // a new read of the row replaces the previous pairs
         for (const n of nums) pairs.set(n, { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] }, manual: null });
         ready = true;
-        lastRowSig = getRowSig();
+        scrapeFailed = false;
+        lastRowSig = sigAtStart;
         if (!isVerifyRetry) {
           verifyRetries = 0; remarkTouched = false; pairsTouched = false;
           scheduleRemarkVerify();
         }
         log(`Scrape complete · A: ${nums.map((n) => `T${n}=${a[n] || 'empty'}`).join(' / ')} · B: ${nums.map((n) => `T${n}=${b[n] || 'empty'}`).join(' / ')}`);
       } catch (e) {
-        ready = false;
+        // A failed verify retry leaves the earlier, good pairs in place; a failed first read of a row is retried on the
+        // next row change.
+        if (!isVerifyRetry) { ready = false; scrapeFailed = true; lastRowSig = sigAtStart; }
         console.error(`${TAG} Scraping Annotator 2 failed:`, e);
         setSummary('⚠️ Could not read Annotator 2 (see console).');
+        try { await clickTab(0); } catch (e2) { /* best effort: leave the reviewer on Annotator 1 */ }
       } finally {
         scraping = false;
         render();
@@ -575,7 +582,11 @@
       const tick = () => {
         if (++tries > 6) return;
         verifyTimer = setTimeout(async () => {
-          if (remarkTouched || pairsTouched) return;
+          if (remarkTouched || pairsTouched || Utils.inTextEntry()) return; // typing or about to: never switch tabs under the user
+          if (ready && !scraping && activeTabIndex() === 0 && scoreableTrans().some((n) => readScore(n) !== (snapA[n] || ''))) {
+            pairsTouched = true; // a score changed by hand (the mouse): the pairs are in use
+            return;
+          }
           const stale = ready && !scraping && !adopting && verifyRetries < 2 && activeTabIndex() === 0
             && scoreableTrans().some((n) => readRemark(n) !== (remA[n] || ''));
           if (stale) { verifyRetries++; await scrapeBoth(true); }
@@ -625,7 +636,8 @@
         // Annotator 1's live unit equals Annotator 2's original while the two originals differ: shown as swapped.
         const isSwapped = !onB && !!pair && !sameUnit(pair.a, pair.b) && sameUnit(cur, pair.b);
         if (isSwapped) swapped.push(n);
-        const wasNote = pair && pair.manual ? ` <span class="qc-was">· your edit: ${escapeHtml(describeUnit(pair.manual))}</span>` : '';
+        const wasNote = pair && pair.manual
+          ? ` <span class="qc-was" title="${escapeHtml(`${pair.manual.score || '(not scored)'} + ${pair.manual.remark}`)}">· your edit: ${escapeHtml(describeUnit(pair.manual))}</span>` : '';
         const badge = ensureBadge(mod);
         let html, cls;
         if (isSwapped) { // "swapped + what it was + undo" only on the Annotator 1 tab
@@ -910,7 +922,7 @@
         injectStyle();
         injectPanel();
         const sig = getRowSig();
-        if (ready && sig && sig !== lastRowSig) { // row changed -> re-scrape Annotator 2
+        if ((ready || scrapeFailed) && sig && sig !== lastRowSig) { // row changed -> re-scrape Annotator 2
           log('Row changed -> re-scraping');
           // Back to the first translation on the new row. Silent because the
           // badge hosts are about to be rebuilt by the scrape — the first
@@ -982,7 +994,7 @@
         e.preventDefault();
         // Every Z that writes (either direction of the flip) moves on to the next translation; a refused Z stays put.
         // To flip one back, step up and press Z again.
-        Promise.resolve(flip(n)).then((ok) => { if (ok) advanceFocus(); });
+        Promise.resolve(flip(n)).then((ok) => { if (ok && cursor.get() === n) advanceFocus(); });
         return;
       }
       if (k === 'x') { e.preventDefault(); eraseScore(n); return; }

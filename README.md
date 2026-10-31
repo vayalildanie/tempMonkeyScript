@@ -441,7 +441,7 @@ QC Compare:
 - **Fixed** QC row-change detection: it read a module that no longer exists,
   so a new row was never re-scraped.
 
-Tests: 191 Playwright tests, including a new reduced QC page fixture
+Tests: 197 Playwright tests, including a new reduced QC page fixture
 (`tests/fixtures/quality_compare.html`) with a two-tab simulator. Live NOVA
 checks are listed under "Known unverified".
 

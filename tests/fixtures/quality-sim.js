@@ -17,6 +17,7 @@
 //   __fixture.seedQC({ a1: { 1: { score: '3 Points', remark: '' }, … }, a2: { … } })
 //   __fixture.readQC()          -> deep copy of both datasets (active tab synced first)
 //   __fixture.tabLog            -> indices of every tab switch, in order
+//   __fixture.failTabSwitch     -> set true to make tab clicks do nothing (a read that cannot finish)
 //   __fixture.rerenderScoreHost(n) -> replace TransN Score's .cascade-container
 //                                    with a fresh element, as a platform re-render does
 //   __fixture.rerenderRemarkHost(n) -> replace TransN Remarks (the whole module) with fresh nodes
@@ -122,7 +123,7 @@
   }
 
   tabs().forEach(function (tab, i) {
-    tab.addEventListener('click', function () { switchTo(i); });
+    tab.addEventListener('click', function () { if (!fx.failTabSwitch) switchTo(i); }); // failTabSwitch: a platform that ignores the click
   });
 
   ['right', 'wrong'].forEach(function (kind) {

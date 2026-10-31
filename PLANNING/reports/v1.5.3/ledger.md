@@ -43,6 +43,21 @@ Reviewer: `agent-skills:code-reviewer` (read-only), verdict REQUEST CHANGES, no 
 7. **Fixed: Escape during IME composition** is now left to the IME (`e.isComposing`); tested.
 8. **Accepted nits:** a typed remark that ends in a quoted span is treated as a quote for chip separators (any trailing `"…"`); a zero-width-space-only remark passes `trim()`.
 
+## Review R-B (Track B) and rulings
+
+Reviewer: `agent-skills:code-reviewer` (read-only), verdict REQUEST CHANGES. It reviewed `7827464` and noted the verify redesign landing at `7a2b281`. Fixed in the next commit (197 tests green; every fix mutation-checked against its test):
+
+1. **Fixed: Z could write the previous row's Annotator 2 unit into the new row.** In the ~220ms before the re-scrape starts the pairs were stale and `flip` did not look. `flip` now refuses while `getRowSig() !== lastRowSig`.
+2. **Fixed: a row change during a scrape was never detected.** `lastRowSig` was taken at the end of the read. It is now taken before it, so the next mutation sees the new row and re-reads.
+3. **Fixed (rest of it): a score picked by hand (the mouse) did not count as the user acting**, so a verify retry within 2.5s could rebuild the pair from it. The verify now treats any live score that differs from the snapshot as "the pairs are in use" and stops.
+4. **Fixed: a failed scrape left the module dead.** A failed first read now returns to Annotator 1's tab and is retried on the next row change (`scrapeFailed`); a failed verify retry leaves the earlier good pairs and `ready` alone.
+5. **Fixed: the verify could switch tabs under a focused Remarks box.** It now does nothing while `Utils.inTextEntry()` is true.
+6. **Partly fixed: the `manual` stash.** The badge note now carries the full text in a `title` (hover). Accepted: only the latest stash is kept, and nothing restores it (ruling B8 stands: it is a record, not a third flip state).
+7. **Accepted (pre-existing): the idle re-render loop.** `updateSummary` rewrites `innerHTML` each render, which retriggers `onMutate` about every 220ms forever. Not changed: out of scope, and it does not affect correctness. Also accepted: a flicker between the Note-based and Trans1-based row signature while the Note module is absent mid-render would be read as a row change (the pairs are then rebuilt); no evidence it happens on the real page, where the signature is identical across both annotator tabs.
+8. **Fixed (minor): Z advanced from the cursor's current position,** so an arrow press during a flip skipped a translation. It now advances only if the selection is still on the flipped translation.
+
+Test notes: a lazy-load test was misnamed (renamed); the 3-Points warning tests also pass via the idle re-render loop (they do not isolate the `input` listener; accepted). New tests: row change before the re-read, row change during a read, recovery after a failed read, mouse-picked score then verify, advance guard, hover title.
+
 ## Findings and rulings
 
 - **B1 finding:** `3`, `C`, and label-digit picks do not advance in QC today (`relabel()` and `commitLabel()` never move the cursor); only Z advances. Ruling: unchanged in v1.5.3; plan lines corrected. Not in scope.
@@ -52,5 +67,5 @@ Reviewer: `agent-skills:code-reviewer` (read-only), verdict REQUEST CHANGES, no 
 - **Badge second line moved from B6 to B4.** Comparing whole units made a remark-only difference show a red "Swap" badge with equal scores; the `Remark: …` line (Annotator 2's text, or `(none)`) ships with B4 so every commit is coherent. B6 kept the 3-Points warning, its live refresh, and the legend text.
 - **Summary count now includes remark-only differences** (Trans5 in the B1 smoke data); the B1 smoke expectation was updated.
 - **No separate unit test for `flipTarget`.** The plan suggested a `shared.spec.js`-style unit test; exposing it would add a test-only export to the product module. Its cases (matches a, matches b, neither, nothing to flip) are covered through the browser tests instead (flip-flop, clears table, hand edit, matches, no-score refusal).
-- **Lazy-load limitation.** The bounded verify (up to ~1.6s, fill-only, stops on user typing) can only notice late text on Annotator 1's tab. Late text on Annotator 2's tab at scrape time would be recorded empty (flipping to it would then clear Annotator 1's remark, which is kept as the stash). Needs a live check.
+- **Lazy-load verify, redesigned (`7a2b281`).** The B4 version merged fill-only, which could never correct a first read that captured the *previous row's leftover text* (the failure the original poller was written for, per the README). It now re-scrapes (full replace, at most twice, for about 2.5s) when Annotator 1's live remarks differ from the snapshot, but only while the user has not typed, flipped, or relabeled anything; after that it stops for good, so a preserved value can never be lost to it. Two new tests (leftover text corrected; verify stops after a flip) plus the lazy-load test; mutation checks: ignoring the "touched" flag failed the stop test, disabling the verify failed the lazy and leftover tests. Limitation: it cannot see late text on Annotator 2's tab (flipping to an empty remark would then clear Annotator 1's, which is kept as the stash). Needs a live check.
 - **Subagent fixture note:** the worktree lacks the gitignored `captures/` folder, so its full-suite count differs by the one capture contract test.

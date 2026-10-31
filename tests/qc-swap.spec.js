@@ -176,7 +176,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await expectUnit(page, 1, B(1));
   });
 
-  test('keeps the pair unchanged when a lazy-loaded remark shows up after the scrape', async ({ page }) => {
+  test('records a remark that loads after the scrape as Annotator 1\'s original', async ({ page }) => {
     await bootQC(page);
     await selectTrans(page, 6);
     await setRemark(page, 6, 'late text', { input: false }); // the platform finishing a load: no input event
@@ -217,6 +217,28 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await expectUnit(page, 4, A(4)); // the original stays the empty one
   });
 
+  test('does not re-read the pair after a score was changed by hand', async ({ page }) => {
+    await bootQC(page);
+    await page.evaluate(() => { // a score picked with the mouse: no keyboard path, no input event
+      document.querySelector('[data-module-name="Trans2 Score"] .ant-select-selection-item').textContent = '3 Points';
+    });
+    await setRemark(page, 6, 'late text', { input: false });
+    await page.waitForTimeout(2200);
+    await selectTrans(page, 2);
+    await page.keyboard.press('z'); // the live unit now equals Annotator 2's, so Z flips back to the original
+    await expectUnit(page, 2, A(2));
+  });
+
+  test('shows the whole hand-edited text on hover when the badge shortens it', async ({ page }) => {
+    const long = 'a long hand-edited remark that runs well past forty characters in length';
+    await bootQC(page);
+    await selectTrans(page, 4);
+    await setRemark(page, 4, long);
+    await page.keyboard.press('z');
+    await expectUnit(page, 4, B(4));
+    await expect(page.locator(`${scoreMod(4)} .qc-badge [title]`)).toHaveAttribute('title', `3 Points + ${long}`);
+  });
+
   test('keeps a hand-edited remark in the badge before Z overwrites it', async ({ page }) => {
     await bootQC(page);
     await selectTrans(page, 4);
@@ -243,6 +265,56 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await page.keyboard.press('z');
     await expect(page.locator('#qc-cursor')).toContainText('Trans1 matches');
     await expectUnit(page, 1, B(1));
+  });
+});
+
+test.describe('rows changing under the pairs', () => {
+  const heading = (page, text) => page.evaluate((t) => {
+    document.querySelector('[data-module-key="NoteTrans"] h1').textContent = t;
+  }, text);
+
+  test('refuses Z in the moment after the row changes, before it is re-read', async ({ page }) => {
+    await bootQC(page);
+    await page.evaluate(() => {
+      document.querySelector('[data-module-key="NoteTrans"] h1').textContent = 'Row two heading';
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true, cancelable: true }));
+    });
+    await expect.poll(() => page.evaluate(() => window.__fixture.tabLog)).toEqual([1, 0, 1, 0]);
+    await expectUnit(page, 1, A(1)); // the old row's Annotator 2 value was not written into the new row
+  });
+
+  test('re-reads again when the row changes while a read is already in progress', async ({ page }) => {
+    await bootQC(page);
+    await heading(page, 'Row two heading');
+    await page.waitForFunction(() => window.__fixture.tabLog.length >= 3); // the read is on Annotator 2's tab
+    await heading(page, 'Row three heading');
+    await expect.poll(() => page.evaluate(() => window.__fixture.tabLog)).toEqual([1, 0, 1, 0, 1, 0]);
+  });
+
+  test('works again after the next row change when a read could not finish', async ({ page }) => {
+    await bootQC(page);
+    await page.evaluate(() => { window.__fixture.failTabSwitch = true; });
+    await heading(page, 'Row two heading');
+    await expect(page.locator('#qc-summary')).toContainText('Could not read Annotator 2', { timeout: 8000 });
+    await page.evaluate(() => { window.__fixture.failTabSwitch = false; });
+    await heading(page, 'Row three heading');
+    await expect.poll(() => page.evaluate(() => window.__fixture.tabLog)).toEqual([1, 0, 1, 0]);
+    await expect(page.locator('.qc-badge')).toHaveCount(SCOREABLE.length);
+    await expectSelected(page, 1);
+    await page.keyboard.press('z');
+    await expectUnit(page, 1, B(1));
+  });
+
+  test('does not move on to a different translation when the selection was moved during the flip', async ({ page }) => {
+    await bootQC(page);
+    await page.evaluate(() => {
+      const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+      key('z');
+      key('ArrowDown'); // same tick: the selection is already on Trans2 when the flip finishes
+    });
+    await expectUnit(page, 1, B(1));
+    await page.waitForTimeout(400);
+    await expectSelected(page, 2);
   });
 });
 
