@@ -54,12 +54,20 @@
     // ---------- Runtime state ----------
     let snapA = {};              // Annotator 1 score snapshot: { transN: score string }
     let snapB = {};              // Annotator 2 score snapshot: { transN: score string }
+    let remA = {};               // Annotator 1 remark snapshot: { transN: text }
+    let remB = {};               // Annotator 2 remark snapshot: { transN: text }
+    // The preserved pair: each translation's two ORIGINAL { score, remark } units, taken when the row was scraped and
+    // never emptied afterwards (a clear, a re-scrape, or a hand edit changes only the live fields). Z flips the live
+    // unit between the two; `manual` holds a hand-edited unit Z was about to overwrite. Discarded on a row change.
+    let pairs = new Map();       // n -> { a, b, manual }
+    let swappedNums = [];        // translations whose live Annotator 1 unit currently equals Annotator 2's (for the summary)
+    let remarkTouched = false;   // the user typed in a Remarks box since the last scrape (stops the lazy-load verify)
+    let verifyTimer = null;      // bounded post-scrape check that late-loading remark text was captured
     let scraping = false;        // currently switching tabs to scrape (don't render badges now, or Annotator 2's value gets rendered as Annotator 1)
     let adopting = false;        // currently adopting/writing a value (driving the cascader; don't let the observer mis-render now)
     let ready = false;           // scraped successfully at least once
     let lastRowSig = '';         // row signature; re-scrape on a row change
     let diffNums = [];           // trans numbers currently disagreeing (for the summary count)
-    let adopted = new Map();     // adopted Trans -> the original Annotator 1 value (was/undo); cleared on a row change
     let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
     let helpOpen = true;         // whether the panel help text is expanded; persisted (v1.4.2), defaults to expanded on a brand-new install
     let labelBusy = false;       // guards against double-firing while a label-menu click is mid-flight
@@ -118,6 +126,29 @@
       }
       return null;
     }
+    function remarkTextarea(n) {
+      const mod = remarkModule(n);
+      return mod ? mod.querySelector('textarea') : null;
+    }
+    function readRemark(n) { const ta = remarkTextarea(n); return ta ? ta.value : ''; }
+    function readUnit(n) { return { score: readScore(n), remark: readRemark(n) }; }
+    // Remarks match when they are equal ignoring leading/trailing whitespace; scores match exactly.
+    function sameUnit(x, y) {
+      return !!x && !!y && x.score === y.score && String(x.remark || '').trim() === String(y.remark || '').trim();
+    }
+    // Which side to write when Z is pressed, or null when there is nothing to flip. A live unit that matches neither
+    // side (cleared, half-cleared, hand-edited) gets Annotator 2's first, unless Annotator 2 has no score to write.
+    function flipTarget(pair, live) {
+      if (sameUnit(pair.a, pair.b)) return null;
+      if (sameUnit(live, pair.a)) return 'b';
+      if (sameUnit(live, pair.b)) return 'a';
+      return pair.b.score ? 'b' : 'a';
+    }
+    function describeUnit(u) {
+      const remark = String(u.remark || '').trim();
+      const short = remark.length > 40 ? `${remark.slice(0, 40)}…` : remark;
+      return `${u.score || '(not scored)'}${short ? ` + “${short}”` : ''}`;
+    }
     // Trans numbers on this row that have both a translation and a scoring control (empty translations aren't compared).
     function scoreableTrans() {
       const out = [];
@@ -126,7 +157,10 @@
     }
     // Row signature: the source (笔记外文翻译) differs per row -> row-change detection.
     function getRowSig() {
-      const src = document.querySelector('[data-module-name="笔记外文翻译"]');
+      // The Note module (the page's own source text, different per row), else Trans1 — the same signature the other
+      // modules use. The old 笔记外文翻译 module no longer exists, so a row change was never detected here.
+      const src = document.querySelector('[data-module-key="NoteTrans"]')
+        || document.querySelector('[data-module-name="Trans1"]');
       return src ? src.textContent.trim().slice(0, 80) : '';
     }
 
@@ -231,57 +265,51 @@
       return got;
     }
 
-    // Click a red badge -> write Annotator 2's value into Trans n of Annotator 1 (mouse only, no keyboard).
-    // Returns true on a successful adopt, false otherwise — lets the Z-key
-    // handler (v1.4.2) auto-advance only when the swap actually happened,
-    // without also firing for the equivalent mouse-driven Adopt-button
-    // click (which shouldn't move the cursor out from under a manual click).
-    async function adoptOther(n) {
+    // Write one side of a translation's preserved pair into Annotator 1's live fields: the score through the
+    // cascader (cleared if that side had none), the remark through the native setter so NOVA sees the input event.
+    // Callers hold `adopting`. Throws if the score write does not verify.
+    async function writeSide(n, side) {
+      const target = pairs.get(n)[side];
+      if (readScore(n) !== target.score) {
+        if (target.score) await writeCascade(n, target.score);
+        else await clearCascade(n);
+      }
+      const ta = remarkTextarea(n);
+      if (ta && ta.value !== target.remark) Utils.setNativeValue(ta, target.remark);
+    }
+
+    // Flip the translation between the two annotators' preserved values (Z, the badge's Swap → and its Undo).
+    // The pair, not the live Annotator 2 tab, is what gets written, so clearing either side's data never stops a flip.
+    // Returns true when something was written (the Z handler advances only then).
+    async function flip(n) {
+      if (n == null) { setCursorStatus('No translation selected'); return false; }
       if (scraping || adopting || !ready) return false;
       if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to swap.</span>'); return false; }
-      const target = snapB[n] || '';
-      if (!target) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return false; }
-      const prev = readScore(n); // the value before adopting (Annotator 1) -> saved for "was..." + undo
+      const pair = pairs.get(n);
+      if (!pair) return false;
+      const live = readUnit(n);
+      const side = flipTarget(pair, live);
+      if (side === null) { setCursorStatus(`Trans${n} matches`); return false; }
+      if (side === 'b' && !pair.b.score) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return false; }
+      // A live unit that is neither original (a hand edit) is kept before it is overwritten.
+      if (!sameUnit(live, pair.a) && !sameUnit(live, pair.b) && (live.score || live.remark.trim())) pair.manual = live;
       adopting = true;
-      setSummary(`Swapping Trans${n} to Annotator 2…`);
+      setSummary(`Swapping Trans${n}…`);
       let ok = false;
       try {
-        await writeCascade(n, target);
-        if (!adopted.has(n)) adopted.set(n, prev); // record the original only on the first adopt (repeat clicks don't overwrite)
-        snapA[n] = target; // Annotator 1 now = Annotator 2 -> update the snapshot so it stays consistent when you view Annotator 2
-        log(`Trans${n}: adopted Annotator 2 = ${target} (was ${prev || 'empty'})`);
+        await writeSide(n, side);
+        snapA[n] = pair[side].score; // Annotator 1 now holds that side -> keep the snapshots consistent for Annotator 2's tab
+        remA[n] = pair[side].remark;
+        log(`Trans${n}: flipped to ${side === 'b' ? 'Annotator 2' : 'Annotator 1'} = ${describeUnit(pair[side])}`);
         ok = true;
       } catch (e) {
-        console.error(`${TAG} Adopt failed:`, e);
-        setSummary(`⚠️ Trans${n}: could not apply Annotator 2 (see console).`);
+        console.error(`${TAG} Swap failed:`, e);
+        setSummary(`⚠️ Trans${n}: could not apply the swap (see console).`);
       } finally {
         adopting = false;
         render();
       }
       return ok;
-    }
-
-    // Undo the adopt: write the original Annotator 1 value back (clear it if it wasn't scored).
-    async function undoAdopt(n) {
-      if (scraping || adopting || !ready) return;
-      if (activeTabIndex() !== 0) return;
-      if (!adopted.has(n)) return;
-      const prev = adopted.get(n);
-      adopting = true;
-      setSummary(`Undoing Trans${n}…`);
-      try {
-        if (prev) await writeCascade(n, prev);
-        else await clearCascade(n); // wasn't scored originally -> clear
-        snapA[n] = prev;
-        adopted.delete(n);
-        log(`Trans${n}: undone, restored to ${prev || '(empty)'}`);
-      } catch (e) {
-        console.error(`${TAG} Undo failed:`, e);
-        setSummary(`⚠️ Trans${n}: undo failed (see console).`);
-      } finally {
-        adopting = false;
-        render();
-      }
     }
 
     // Clear a Trans's score (click the cascader's built-in clear button).
@@ -333,7 +361,6 @@
       try {
         await writeCascade(n, pathKey);
         snapA[n] = pathKey;
-        adopted.delete(n); // a hand-set value is no longer "adopted from Annotator 2"
         if (pathKey === PATH_KEY['2']) {
           await reopenForLabelPick(n);
           setCursorStatus(`Trans${n} = 2 Points — press 1-9/0 for a label`);
@@ -357,7 +384,6 @@
       try {
         await clearCascade(n);
         snapA[n] = '';
-        adopted.delete(n);
         setCursorStatus(`Trans${n} cleared`);
       } catch (e) {
         console.error(`${TAG} Erase failed:`, e);
@@ -478,7 +504,6 @@
       if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
       const got = readScore(n);
       snapA[n] = got;
-      adopted.delete(n);
       setCursorStatus(got ? `Trans${n} = ${got} ✓` : `⚠️ Trans${n}: label didn't register`);
       render();
     }
@@ -493,27 +518,49 @@
     // ====================================================================
     // Scrape both: stay on Annotator 1 -> read A (the live value) -> click Annotator 2, read B -> click back to Annotator 1.
     // ====================================================================
-    async function scrapeBoth() {
+    // `fillOnly` is the lazy-load re-check of the same row: it may only fill values that were empty, never replace or
+    // empty a stored one, so the preserved pair cannot be damaged by a second read.
+    async function scrapeBoth(fillOnly = false) {
       const tabs = getTabs();
       if (tabs.length < 2) { ready = false; log('Only one annotator — nothing to compare'); setSummary('Only one annotator — nothing to compare.'); return; }
       scraping = true;
-      adopted.clear(); // new row -> clear the previous row's adopt/undo records
+      if (!fillOnly) pairs = new Map(); // new row -> the previous row's pairs are gone
       clearBadges();
       setSummary('Loading Annotator 2…');
       try {
         await clickTab(0); // make sure we're on Annotator 1 (the baseline)
         const nums = scoreableTrans();
-        const a = {};
-        for (const n of nums) a[n] = readScore(n);                       // read Annotator 1 scores
+        const a = {}, ra = {};
+        for (const n of nums) { a[n] = readScore(n); ra[n] = readRemark(n); } // read Annotator 1 scores and remarks
         ensureVerdict('right'); // fixed rule: Annotator 1 gets verdict "1" (skip if already marked)
         await clickTab(1);                                              // switch to Annotator 2
-        const b = {};
-        for (const n of nums) b[n] = readScore(n);                       // read Annotator 2 scores
+        const b = {}, rb = {};
+        for (const n of nums) { b[n] = readScore(n); rb[n] = readRemark(n); } // read Annotator 2 scores and remarks
         ensureVerdict('wrong'); // fixed rule: Annotator 2 gets verdict "3" (skip if already marked)
         await clickTab(0);                                              // switch back to Annotator 1
-        snapA = a; snapB = b;
+        for (const n of nums) {
+          const read = { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] } };
+          const pair = pairs.get(n);
+          if (!pair) { pairs.set(n, { a: read.a, b: read.b, manual: null }); continue; }
+          for (const side of ['a', 'b']) { // fill-only merge: an empty stored half may be filled, nothing is replaced
+            if (!pair[side].score && read[side].score) pair[side].score = read[side].score;
+            if (!pair[side].remark && read[side].remark) pair[side].remark = read[side].remark;
+          }
+        }
+        if (fillOnly) {
+          for (const n of nums) {
+            if (!snapB[n] && b[n]) snapB[n] = b[n];
+            if (!remB[n] && rb[n]) remB[n] = rb[n];
+            if (!snapA[n] && a[n]) snapA[n] = a[n];
+            if (!remA[n] && ra[n]) remA[n] = ra[n];
+          }
+        } else {
+          snapA = a; snapB = b; remA = ra; remB = rb;
+          remarkTouched = false;
+        }
         ready = true;
         lastRowSig = getRowSig();
+        if (!fillOnly) scheduleRemarkVerify();
         log(`Scrape complete · A: ${nums.map((n) => `T${n}=${a[n] || 'empty'}`).join(' / ')} · B: ${nums.map((n) => `T${n}=${b[n] || 'empty'}`).join(' / ')}`);
       } catch (e) {
         ready = false;
@@ -523,6 +570,26 @@
         scraping = false;
         render();
       }
+    }
+
+    // The platform sometimes fills a Remarks textarea a moment after the row appears, which a scrape taken too early
+    // would record as empty. For about 1.6s after a scrape, look for Annotator 1 remark text the snapshot lacks and
+    // re-scrape fill-only once it shows. It stops as soon as the user types (anything new is then theirs, not a late
+    // load), and a fill-only scrape never replaces or empties a stored value.
+    function scheduleRemarkVerify() {
+      clearTimeout(verifyTimer);
+      let tries = 0;
+      const tick = () => {
+        if (++tries > 4) return;
+        verifyTimer = setTimeout(async () => {
+          if (remarkTouched) return;
+          const late = ready && !scraping && !adopting && activeTabIndex() === 0
+            && scoreableTrans().some((n) => !remA[n] && readRemark(n));
+          if (late) await scrapeBoth(true);
+          tick();
+        }, 400);
+      };
+      tick();
     }
 
     // ====================================================================
@@ -544,10 +611,12 @@
       if (activeIdx === -1) return; // no active tab found (a render gap) -> skip
       const onB = activeIdx === 1;
       const otherSnap = onB ? snapA : snapB;
+      const otherRem = onB ? remA : remB;
       const otherLabel = onB ? 'Annotator 1' : 'Annotator 2';
       updatePanelHeader(onB ? 2 : 1, onB ? 1 : 2); // header: You are on Annotator X, viewing Y's values
       const nums = scoreableTrans();
       const diffs = [];
+      const swapped = [];
       for (let n = 1; n <= TRANS_MAX; n++) {
         const mod = scoreModule(n);
         if (!mod) continue;
@@ -555,27 +624,34 @@
           const old = mod.querySelector('.qc-badge'); if (old) old.remove();
           continue;
         }
-        const cur = readScore(n);      // the live value of the current tab (= the current annotator)
-        const other = otherSnap[n] || ''; // the other annotator's snapshot value
-        const same = cur === other;
+        const cur = readUnit(n);       // the live score and remark of the current tab (= the current annotator)
+        const other = { score: otherSnap[n] || '', remark: otherRem[n] || '' }; // the other annotator's snapshot unit
+        const same = sameUnit(cur, other);
         if (!same) diffs.push(n);
+        const pair = pairs.get(n);
+        // Annotator 1's live unit equals Annotator 2's original while the two originals differ: shown as swapped.
+        const isSwapped = !onB && !!pair && !sameUnit(pair.a, pair.b) && sameUnit(cur, pair.b);
+        if (isSwapped) swapped.push(n);
+        const wasNote = pair && pair.manual ? ` <span class="qc-was">· your edit: ${escapeHtml(describeUnit(pair.manual))}</span>` : '';
         const badge = ensureBadge(mod);
         let html, cls;
-        if (!onB && adopted.has(n)) { // show "adopted + original + undo" only on the Annotator 1 tab
-          const prev = adopted.get(n);
-          html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${escapeHtml(prev || '(not scored)')}</span> <span class="qc-undo" data-undo="${n}">Undo</span>`;
+        if (isSwapped) { // "swapped + what it was + undo" only on the Annotator 1 tab
+          html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${escapeHtml(describeUnit(pair.a))}</span>${wasNote} <span class="qc-undo" data-undo="${n}">Undo</span>`;
           cls = 'qc-badge qc-adopted';
         } else if (same) {
           html = `✓ ${otherLabel} agrees`;
           cls = 'qc-badge qc-same';
         } else {
-          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${escapeHtml(other || '(not scored)')}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Swap →</span>`;
+          const remarkLine = String(cur.remark).trim() === String(other.remark).trim()
+            ? '' : `<span class="qc-bd-rem">Remark: ${escapeHtml(other.remark.trim() || '(none)')}</span>`;
+          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${escapeHtml(other.score || '(not scored)')}${remarkLine}${wasNote}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Swap →</span>`;
           cls = 'qc-badge qc-diff';
         }
         if (badge.innerHTML !== html) badge.innerHTML = html; // write only on change, to avoid triggering a needless mutation
         if (badge.className !== cls) badge.className = cls;
       }
       diffNums = diffs;
+      swappedNums = swapped;
       updateSummary();
     }
 
@@ -624,19 +700,8 @@
       },
     });
 
-    // Swap the cursor's translation between the two annotators' values.
-    // Formerly one-way "Adopt" plus a separate Undo click; the pair was
-    // already a clean toggle, so `S` just makes it reversible in one key.
-    // Note the naming split: user-facing text says "Swap", the underlying
-    // functions keep their adopt/undo names — renaming those would churn the
-    // data-attribute click delegation for no behavioral gain.
-    function swap(n) {
-      if (n == null) { setCursorStatus('No translation selected'); return; }
-      return adopted.has(n) ? undoAdopt(n) : adoptOther(n);
-    }
-
-    // Move the selection to the next scoreable translation (the same step ArrowDown takes). Z's apply path calls it
-    // after a successful swap; undo never does, so focus stays where it is. No wraparound: the last one stays put.
+    // Move the selection to the next scoreable translation (the same step ArrowDown takes). Z calls it after a flip
+    // that wrote something. No wraparound: the last one stays put.
     function advanceFocus() { cursor.step(1); }
 
     // Rule-check warning: a 3-Points Trans shouldn't have a remark.
@@ -671,7 +736,7 @@
     function updateSummary() {
       if (!summaryEl) return;
       const total = scoreableTrans().length; // number of translations being compared (empty ones excluded)
-      const adoptedCount = adopted.size; // scores swapped this row, so adopting shows as progress too
+      const adoptedCount = swappedNums.length; // translations currently holding Annotator 2's unit, so swapping shows as progress
       const done = adoptedCount ? `<span style="color:#2b8a3e;"> · ${adoptedCount} swapped</span>` : '';
       if (!diffNums.length) {
         summaryEl.innerHTML = `<span style="color:#2f9e44;font-weight:600;">Nothing left to reconcile ✓</span>`
@@ -699,6 +764,7 @@
         .qc-badge.qc-diff { color: #c92a2a; background: #fff0f0; border: 1px solid #ffc9c9; font-weight: 600; cursor: pointer; display: flex; align-items: center; }
         .qc-badge.qc-diff:hover { background: #ffe3e3; }
         .qc-badge .qc-bd-val { flex: 1; min-width: 0; word-break: break-word; }
+        .qc-badge .qc-bd-rem { display: block; font-weight: 400; color: #868e96; }
         .qc-badge.qc-adopted { color: #2b8a3e; background: #ebfbee; border: 1px solid #b2f2bb; }
         .qc-badge .qc-was { color: #868e96; font-weight: 400; }
         .qc-badge .qc-undo { color: #1c7ed6; cursor: pointer; text-decoration: underline; font-weight: 600; margin-left: 6px; }
@@ -921,13 +987,9 @@
       if (k === 'o') { e.preventDefault(); helpOpen = !helpOpen; saveHelpOpen(); applyHelp(); return; }
       if (k === 'z') {
         e.preventDefault();
-        // v1.4.2: swapping (not undoing) auto-advances to the next translation,
-        // matching how the "3" key already advances after scoring in Module 1.
-        if (adopted.has(n)) {
-          swap(n); // undo direction — focus stays exactly where it is
-        } else {
-          Promise.resolve(swap(n)).then((ok) => { if (ok) advanceFocus(); });
-        }
+        // Every Z that writes (either direction of the flip) moves on to the next translation; a refused Z stays put.
+        // To flip one back, step up and press Z again.
+        Promise.resolve(flip(n)).then((ok) => { if (ok) advanceFocus(); });
         return;
       }
       if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
@@ -947,16 +1009,28 @@
       document.addEventListener('click', (e) => {
         if (!e.target.closest) return;
         const undo = e.target.closest('.qc-undo');
-        if (undo) { e.preventDefault(); e.stopPropagation(); undoAdopt(parseInt(undo.dataset.undo, 10)); return; }
+        if (undo) { e.preventDefault(); e.stopPropagation(); flip(parseInt(undo.dataset.undo, 10)); return; }
         const sAdopt = e.target.closest('.qc-adopt-btn'); // the score's blue Adopt button (handled separately + stops propagation)
-        if (sAdopt) { e.preventDefault(); e.stopPropagation(); adoptOther(parseInt(sAdopt.dataset.adoptScore, 10)); return; }
+        if (sAdopt) { e.preventDefault(); e.stopPropagation(); flip(parseInt(sAdopt.dataset.adoptScore, 10)); return; }
         const badge = e.target.closest('.qc-badge.qc-diff'); // clicking anywhere in the red area also adopts
         if (!badge || activeTabIndex() !== 0) return;
         e.preventDefault(); e.stopPropagation();
         const mod = badge.closest('[data-module-name]');
         const n = Utils.transNumFromModuleName(mod, ' Score');
         if (n === null) return;
-        adoptOther(n);
+        flip(n);
+      }, true);
+      // A remark typed on a tab: keep Annotator 1's snapshot current (Annotator 2's tab compares against it) and
+      // refresh the badges. Writes this module makes itself (Z) are ignored.
+      const refreshForRemark = Utils.rafThrottle(render);
+      document.addEventListener('input', (e) => {
+        const ta = e.target;
+        if (!ta || ta.tagName !== 'TEXTAREA' || adopting || scraping || !ta.closest) return;
+        const n = Utils.transNumFromModuleName(ta.closest('[data-module-name]'), ' Remarks');
+        if (n === null) return;
+        remarkTouched = true;
+        if (activeTabIndex() === 0) remA[n] = ta.value;
+        refreshForRemark();
       }, true);
       document.addEventListener('keydown', onKeyDown, true); // capture, matching Scoring Shortcuts
       new MutationObserver(onMutate).observe(document.body, { childList: true, subtree: true });

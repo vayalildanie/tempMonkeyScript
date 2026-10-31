@@ -100,19 +100,18 @@ test.describe('smoke', () => {
     await bootQC(page);
 
     await expect(page.locator('#qc-panel')).toBeVisible();
-    await expect(page.locator('#qc-summary')).toContainText('4 still to reconcile: Trans 1, 2, 4, 7');
+    // Trans5 agrees on the score but the remarks differ, which now counts as still to reconcile (v1.5.3).
+    await expect(page.locator('#qc-summary')).toContainText('5 still to reconcile: Trans 1, 2, 4, 5, 7');
     // Annotator 2 was visited once and the module returned to Annotator 1.
     expect(await page.evaluate(() => window.__fixture.tabLog)).toEqual([1, 0]);
     expect(await activeTab(page)).toBe(0);
     // Verdict rule: Annotator 1 gets "1", Annotator 2 gets "3".
     expect(await page.evaluate(() => window.__fixture.verdict)).toEqual({ a1: 'right', a2: 'wrong' });
 
-    for (const n of [1, 2, 4, 7]) {
+    for (const n of [1, 2, 4, 5, 7]) {
       await expect(page.locator(`${scoreMod(n)} .qc-badge`), `Trans${n}`).toHaveClass(/qc-diff/);
     }
-    for (const n of [5, 6]) {
-      await expect(page.locator(`${scoreMod(n)} .qc-badge`), `Trans${n}`).toHaveClass(/qc-same/);
-    }
+    await expect(page.locator(`${scoreMod(6)} .qc-badge`), 'Trans6').toHaveClass(/qc-same/);
     await expect(page.locator(`${scoreMod(2)} .qc-badge`)).toContainText('Annotator 2: 3 Points');
     await expect(page.locator(`${scoreMod(3)} .qc-badge`)).toHaveCount(0);
     // Annotator 1's own data is what is on screen.

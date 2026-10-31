@@ -189,7 +189,7 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await expect(badge(page, 6)).not.toContainText('was:');
   });
 
-  test('stashes a hand-edited remark before Z overwrites it and shows it as was:', async ({ page }) => {
+  test('keeps a hand-edited remark in the badge before Z overwrites it', async ({ page }) => {
     await bootQC(page);
     await selectTrans(page, 4);
     await setRemark(page, 4, 'typed edit');
@@ -206,12 +206,12 @@ test.describe('failsafe: the preserved pair survives clears and edits', () => {
     await page.keyboard.press('z'); // Trans1 now holds Annotator 2's value
     await expectUnit(page, 1, B(1));
     await page.evaluate(() => {
-      document.querySelector('[data-module-key="NoteTrans"] #content').textContent = 'A different row note.';
+      document.querySelector('[data-module-key="NoteTrans"] h1').textContent = 'A different row heading.';
     });
-    // The re-scrape reads the swapped Trans1 as both annotators' value, so Z has nothing to flip.
-    await expect.poll(() => summary(page)).not.toContain('Trans 1,');
-    await page.keyboard.press('ArrowUp');
+    // The row change re-scrapes: Annotator 2's tab is visited again (tabs 1, 0, then 1, 0).
+    await expect.poll(() => page.evaluate(() => window.__fixture.tabLog)).toEqual([1, 0, 1, 0]);
     await expectSelected(page, 1);
+    // The new pair reads the swapped Trans1 as both annotators' value, so Z has nothing to flip.
     await page.keyboard.press('z');
     await expect(page.locator('#qc-cursor')).toContainText('Trans1 matches');
     await expectUnit(page, 1, B(1));
