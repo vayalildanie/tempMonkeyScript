@@ -7,7 +7,7 @@ const path = require('path');
 const { boot: bootFixture } = require('./helpers/fixture');
 
 const root = path.resolve(__dirname, '..');
-const VERSION = '1.5.3';
+const VERSION = '1.5.4';
 const shot = (name) => path.join(root, 'test-results', `${name}-v${VERSION}.png`);
 
 async function boot(page) {
