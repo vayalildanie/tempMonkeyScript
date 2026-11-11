@@ -42,6 +42,19 @@
 
     const TRANS_MAX = 7;
 
+    // This module's own letter-key bindings and the path-key strings the score keys drive (same naming as the other modules' CFG).
+    const CFG = {
+      keyHelp: 'o',                    // show/hide the panel help text
+      keyFlip: 'z',                    // flip the cursor's translation between Annotator 1's and 2's unit
+      keyErase: 'x',                   // clear the cursor's score
+      keyScore3: '3',
+      keyScore2: '2',
+      keyConfusing: 'c',
+      pathKey3: '3 Points',            // the platform's data-path-key for each option (same strings as Module 1's CFG)
+      pathKey2: '2 Points',
+      pathKeyConfusing: 'Confusing',
+    };
+
     // The verdict control. The reviewer's rule is "1 for user 1, 3 for user 2"; on the page that is the same pair of
     // buttons the original v0.1.83 drove, inside `.quality-container`, confirmed still correct on the live page. Both
     // vocabularies live side by side here on purpose, so they can't silently drift apart the way the header text and
@@ -74,8 +87,6 @@
     let panelEl = null, summaryEl = null, hdrEl = null, warnEl = null, cursorEl = null;
     let helpOpen = true;         // whether the panel help text is expanded; persisted (v1.4.2), defaults to expanded on a brand-new install
     let labelBusy = false;       // guards against double-firing while a label-menu click is mid-flight
-
-    function escapeHtml(s) { return Utils.escapeHtml(s); }
 
     // Rule: a translation scored 3 Points should have no remark of its own -> return the Trans numbers that break it,
     // judged from the live fields of the tab being viewed.
@@ -123,16 +134,8 @@
     function readScore(n) { return Utils.readSelected(scoreModule(n)); } // empty string = not scored
     // Trans n's Remarks module. The platform nests two wrappers with the same name and spells Trans 2's with a space
     // ("Trans 2 Remarks"), so match by number, not by string; the first (outermost) match wins.
-    function remarkModule(n) {
-      for (const mod of document.querySelectorAll('[data-module-name]')) {
-        if (Utils.transNumFromModuleName(mod, ' Remarks') === n) return mod;
-      }
-      return null;
-    }
-    function remarkTextarea(n) {
-      const mod = remarkModule(n);
-      return mod ? mod.querySelector('textarea') : null;
-    }
+    function remarkModule(n) { return Utils.modulesBySuffix(' Remarks').get(n) || null; }
+    const remarkTextarea = Utils.remarkTextarea;
     function readRemark(n) { const ta = remarkTextarea(n); return ta ? ta.value : ''; }
     function readUnit(n) { return { score: readScore(n), remark: readRemark(n) }; }
     // Remarks match when they are equal ignoring leading/trailing whitespace; scores match exactly.
@@ -159,13 +162,7 @@
       return out;
     }
     // Row signature: the source (笔记外文翻译) differs per row -> row-change detection.
-    function getRowSig() {
-      // The Note module (the page's own source text, different per row), else Trans1 — the same signature the other
-      // modules use. The old 笔记外文翻译 module no longer exists, so a row change was never detected here.
-      const src = document.querySelector('[data-module-key="NoteTrans"]')
-        || document.querySelector('[data-module-name="Trans1"]');
-      return src ? src.textContent.trim().slice(0, 80) : '';
-    }
+    const getRowSig = Utils.rowSig;
 
     // ====================================================================
     // Adopt: write the "other annotator"'s score into the current one's
@@ -177,7 +174,9 @@
     // (3) read back & verify, stop on mismatch.
     // ====================================================================
     const SPLIT = '__RC_CASCADER_SPLIT__'; // the level separator token in the platform's data-path-key
-    const ADJACENT_GAP_PX = 120;           // threshold (px) for "the dropdown hugs this select"
+    // threshold (px) for "the dropdown hugs this select". Scoring Shortcuts uses 100: the two values were tuned independently
+    // (v1.0.0 / v1.3.0) and never reconciled; neither is verified against live NOVA, so don't "fix" one to match the other blind.
+    const ADJACENT_GAP_PX = 120;
 
     // popupsVisible/edgeGap/closeOpenCascaders are shared with Scoring
     // Shortcuts — same cascader controls, same "which popup is actually
@@ -340,7 +339,11 @@
     // The path-keys the shortcuts drive. Same strings as Module 1's CFG —
     // deliberately restated rather than shared, because they're the
     // platform's vocabulary and each module reads them from the same DOM.
-    const PATH_KEY = { '3': '3 Points', '2': '2 Points', c: 'Confusing' };
+    const PATH_KEY = {
+      [CFG.keyScore3]: CFG.pathKey3,
+      [CFG.keyScore2]: CFG.pathKey2,
+      [CFG.keyConfusing]: CFG.pathKeyConfusing,
+    };
 
     // Shared preflight for every keyboard write: not mid-scrape, not
     // mid-write, and on the tab we're allowed to write to. Returns false and
@@ -367,7 +370,7 @@
         await writeCascade(n, pathKey);
         snapA[n] = pathKey;
         pairsTouched = true;
-        if (pathKey === PATH_KEY['2']) {
+        if (pathKey === CFG.pathKey2) {
           await reopenForLabelPick(n);
           setCursorStatus(`Trans${n} = 2 Points — press 1-9/0 for a label`);
         } else {
@@ -428,7 +431,7 @@
       // pickNextOnPath does the adjacency-gated, canonPath-matched lookup —
       // same engine writeCascade walks with, so "2 Points" is found the same
       // way here as there.
-      const li = pickNextOnPath(selector, PATH_KEY['2'], 0);
+      const li = pickNextOnPath(selector, CFG.pathKey2, 0);
       if (!li) return;
       Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
       await Utils.waitFor(() => columns() >= 2, 800).catch(() => {});
@@ -451,52 +454,20 @@
     }
 
     // Pick item #i (1-based) from the deepest currently-open menu column.
-    //
-    // This is a deliberately minimal cousin of Module 1's
-    // `pickLabelByNumber`: same decisive leaf signal
-    // (`ant-cascader-menu-item-expand` present = category, absent = leaf),
-    // same single-leaf auto-pick, but without the injected number badges or
-    // the shared label-mode state. Module 1's version is entangled with its
-    // badge rAF loop, its own status panel and `activeIdx`; hoisting all of
-    // that into shared code is a bigger and riskier lift than this copy, and
-    // is the right follow-up once TransCursor has proven the pattern.
+    // The pick/click/drill mechanics are Utils.pickCascaderItem, shared
+    // with Scoring Shortcuts; the guard, popup lookup, status text and
+    // commit (no advance) stay here.
     async function pickLabelByNumber(n, i) {
       if (labelBusy || !canWrite(n)) return;
       labelBusy = true;
       try {
         const popup = labelPopupFor(n);
         if (!popup) { setCursorStatus('No label menu open — press 2 first'); return; }
-        const cols = popup.querySelectorAll('ul.ant-cascader-menu');
-        if (cols.length < 2) { setCursorStatus('Labels not open yet'); return; }
-        const col = cols[cols.length - 1]; // deepest column currently shown
-        const li = col.querySelectorAll('li.ant-cascader-menu-item')[i - 1];
-        if (!li) { setCursorStatus(`No item #${i} here`); return; }
-
-        const isLeaf = !li.classList.contains('ant-cascader-menu-item-expand');
-        const colsBefore = cols.length;
-        Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
-
-        if (isLeaf) { await commitLabel(n); return; }
-
-        // Category: drill in and wait for the next column to render.
-        await Utils.waitFor(() => {
-          const p = labelPopupFor(n);
-          return !!p && p.querySelectorAll('ul.ant-cascader-menu').length > colsBefore;
-        }, 800).catch(() => {});
-
-        // If drilling in reveals exactly one leaf sub-label, take it too —
-        // the leaf still has to be explicitly selected (e.g. to land on
-        // "Grammar/Grammar"), so this isn't skipping a real choice.
-        const p2 = labelPopupFor(n);
-        const newCols = p2 ? p2.querySelectorAll('ul.ant-cascader-menu') : [];
-        const deepest = newCols[newCols.length - 1];
-        const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
-        if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
-          Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
-          await commitLabel(n);
-        } else {
-          setCursorStatus('Category selected — press a number for the sub-label');
-        }
+        const { outcome } = await Utils.pickCascaderItem(popup, i, { findPopup: () => labelPopupFor(n) });
+        if (outcome === 'not-open') setCursorStatus('Labels not open yet');
+        else if (outcome === 'not-found') setCursorStatus(`No item #${i} here`);
+        else if (outcome === 'drilled-category') setCursorStatus('Category selected — press a number for the sub-label');
+        else await commitLabel(n); // 'leaf' or 'drilled-leaf'
       } finally {
         labelBusy = false;
       }
@@ -580,11 +551,13 @@
       clearTimeout(verifyTimer);
       let tries = 0;
       const tick = () => {
-        if (++tries > 6) return;
+        if (++tries > 6) { window.__tlQcVerifyPending = false; return; } // test-only flag: true while a verify timer is pending
+        window.__tlQcVerifyPending = true;
         verifyTimer = setTimeout(async () => {
-          if (remarkTouched || pairsTouched || Utils.inTextEntry()) return; // typing or about to: never switch tabs under the user
+          if (remarkTouched || pairsTouched || Utils.inTextEntry()) { window.__tlQcVerifyPending = false; return; } // typing or about to: never switch tabs under the user
           if (ready && !scraping && activeTabIndex() === 0 && scoreableTrans().some((n) => readScore(n) !== (snapA[n] || ''))) {
             pairsTouched = true; // a score changed by hand (the mouse): the pairs are in use
+            window.__tlQcVerifyPending = false;
             return;
           }
           const stale = ready && !scraping && !adopting && verifyRetries < 2 && activeTabIndex() === 0
@@ -637,19 +610,19 @@
         const isSwapped = !onB && !!pair && !sameUnit(pair.a, pair.b) && sameUnit(cur, pair.b);
         if (isSwapped) swapped.push(n);
         const wasNote = pair && pair.manual
-          ? ` <span class="qc-was" title="${escapeHtml(`${pair.manual.score || '(not scored)'} + ${pair.manual.remark}`)}">· your edit: ${escapeHtml(describeUnit(pair.manual))}</span>` : '';
+          ? ` <span class="qc-was" title="${Utils.escapeHtml(`${pair.manual.score || '(not scored)'} + ${pair.manual.remark}`)}">· your edit: ${Utils.escapeHtml(describeUnit(pair.manual))}</span>` : '';
         const badge = ensureBadge(mod);
         let html, cls;
         if (isSwapped) { // "swapped + what it was + undo" only on the Annotator 1 tab
-          html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${escapeHtml(describeUnit(pair.a))}</span>${wasNote} <span class="qc-undo" data-undo="${n}">Undo</span>`;
+          html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${Utils.escapeHtml(describeUnit(pair.a))}</span>${wasNote} <span class="qc-undo" data-undo="${n}">Undo</span>`;
           cls = 'qc-badge qc-adopted';
         } else if (same) {
           html = `✓ ${otherLabel} agrees`;
           cls = 'qc-badge qc-same';
         } else {
           const remarkLine = String(cur.remark).trim() === String(other.remark).trim()
-            ? '' : `<span class="qc-bd-rem">Remark: ${escapeHtml(other.remark.trim() || '(none)')}</span>`;
-          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${escapeHtml(other.score || '(not scored)')}${remarkLine}${wasNote}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Swap →</span>`;
+            ? '' : `<span class="qc-bd-rem">Remark: ${Utils.escapeHtml(other.remark.trim() || '(none)')}</span>`;
+          html = `<span class="qc-bd-val">≠ ${otherLabel}: ${Utils.escapeHtml(other.score || '(not scored)')}${remarkLine}${wasNote}</span><span class="qc-adopt-btn" data-adopt-score="${n}">Swap →</span>`;
           cls = 'qc-badge qc-diff';
         }
         if (badge.innerHTML !== html) badge.innerHTML = html; // write only on change, to avoid triggering a needless mutation
@@ -721,7 +694,10 @@
     // ====================================================================
     // Summary panel (top) text helpers
     // ====================================================================
-    function setSummary(msg) { if (summaryEl) summaryEl.innerHTML = msg; }
+    // Guarded on inequality for the same reason as setCursorStatus: an
+    // unconditional write mutates the DOM on every settle tick, which
+    // re-triggers the observer and schedules another tick (idle loop).
+    function setSummary(msg) { if (summaryEl && summaryEl.innerHTML !== msg) summaryEl.innerHTML = msg; }
     // The cursor/keyboard status line needs its own element, not summaryEl:
     // updateSummary() replaces summaryEl wholesale at the end of every
     // renderBadges(), so anything posted there is erased on the next
@@ -744,12 +720,12 @@
       const adoptedCount = swappedNums.length; // translations currently holding Annotator 2's unit, so swapping shows as progress
       const done = adoptedCount ? `<span style="color:#2b8a3e;"> · ${adoptedCount} swapped</span>` : '';
       if (!diffNums.length) {
-        summaryEl.innerHTML = `<span style="color:#2f9e44;font-weight:600;">Nothing left to reconcile ✓</span>`
-          + `<span style="color:#8a909c;"> · ${total} translations compared</span>${done}`;
+        setSummary(`<span style="color:#2f9e44;font-weight:600;">Nothing left to reconcile ✓</span>`
+          + `<span style="color:#8a909c;"> · ${total} translations compared</span>${done}`);
         return;
       }
-      summaryEl.innerHTML = `<span style="color:#c92a2a;font-weight:600;">${diffNums.length} still to reconcile: Trans ${diffNums.join(', ')}</span>`
-        + `<span style="color:#8a909c;"> · ${total} compared</span>${done}`;
+      setSummary(`<span style="color:#c92a2a;font-weight:600;">${diffNums.length} still to reconcile: Trans ${diffNums.join(', ')}</span>`
+        + `<span style="color:#8a909c;"> · ${total} compared</span>${done}`);
     }
 
     // ====================================================================
@@ -872,6 +848,7 @@
       if (o && typeof o.left === 'number' && typeof o.top === 'number') {
         p.style.left = o.left + 'px'; p.style.top = o.top + 'px';
         p.style.right = 'auto'; p.style.bottom = 'auto'; p.style.transform = 'none';
+        Utils.clampIntoView(p); // the saved position may be off-screen now (smaller window / resolution change); only touches left/top
       }
     }
     function savePos(p) {
@@ -913,28 +890,23 @@
     // ====================================================================
     // SPA guard: re-inject the panel/styles if removed; re-add badges lost to re-render; auto re-scrape on a row change.
     // ====================================================================
-    let settleTimer = null;
     function onMutate() {
       if (scraping || adopting) return; // don't touch anything during scrape/write, to avoid mis-rendering
-      clearTimeout(settleTimer);
-      settleTimer = setTimeout(() => {
-        if (scraping || adopting) return;
-        injectStyle();
-        injectPanel();
-        const sig = getRowSig();
-        if ((ready || scrapeFailed) && sig && sig !== lastRowSig) { // row changed -> re-scrape Annotator 2
-          log('Row changed -> re-scraping');
-          // Back to the first translation on the new row. Silent because the
-          // badge hosts are about to be rebuilt by the scrape — the first
-          // paint comes from render()'s cursor.sync(). Column memory is
-          // deliberately kept across rows (see TransCursor).
-          cursor.reset({ silent: true });
-          setCursorStatus('');
-          scrapeBoth();
-          return;
-        }
-        render(); // re-add badges lost to a re-render (idempotent)
-      }, 220);
+      injectStyle();
+      injectPanel();
+      const sig = getRowSig();
+      if ((ready || scrapeFailed) && sig && sig !== lastRowSig) { // row changed -> re-scrape Annotator 2
+        log('Row changed -> re-scraping');
+        // Back to the first translation on the new row. Silent because the
+        // badge hosts are about to be rebuilt by the scrape — the first
+        // paint comes from render()'s cursor.sync(). Column memory is
+        // deliberately kept across rows (see TransCursor).
+        cursor.reset({ silent: true });
+        setCursorStatus('');
+        scrapeBoth();
+        return;
+      }
+      render(); // re-add badges lost to a re-render (idempotent)
     }
 
     // ====================================================================
@@ -958,7 +930,12 @@
       }
       if (Utils.inTextEntry()) return; // typing in a Remarks box — the keys are for typing
 
-      switch (e.key) {
+      // WASD act as the arrow keys. Resolved only after the modifier, Escape and typing guards
+      // above, so W/A/S/D typed in a text box still type. Letter shortcuts below keep reading e.key.
+      const ARROW_ALIAS = { w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight' };
+      const key = ARROW_ALIAS[e.key.toLowerCase()] || e.key;
+
+      switch (key) {
         case 'ArrowDown':
           e.preventDefault();
           advanceFocus();
@@ -989,15 +966,15 @@
 
       const k = e.key.toLowerCase();
       // v1.4.0: moved from P to O, matching Remark Composer's open/close key.
-      if (k === 'o') { e.preventDefault(); helpOpen = !helpOpen; saveHelpOpen(); applyHelp(); return; }
-      if (k === 'z') {
+      if (k === CFG.keyHelp) { e.preventDefault(); helpOpen = !helpOpen; saveHelpOpen(); applyHelp(); return; }
+      if (k === CFG.keyFlip) {
         e.preventDefault();
         // Every Z that writes (either direction of the flip) moves on to the next translation; a refused Z stays put.
         // To flip one back, step up and press Z again.
         Promise.resolve(flip(n)).then((ok) => { if (ok && cursor.get() === n) advanceFocus(); });
         return;
       }
-      if (k === 'x') { e.preventDefault(); eraseScore(n); return; }
+      if (k === CFG.keyErase) { e.preventDefault(); eraseScore(n); return; }
       if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
     }
 
@@ -1038,7 +1015,8 @@
         refreshForRemark();
       }, true);
       document.addEventListener('keydown', onKeyDown, true); // capture, matching Scoring Shortcuts
-      new MutationObserver(onMutate).observe(document.body, { childList: true, subtree: true });
+      window.addEventListener('resize', () => { const p = document.getElementById('qc-panel'); if (p) Utils.clampIntoView(p); }); // C-PANELFIT: keep the panel reachable after the window shrinks
+      Utils.observeSettled(onMutate, Utils.SETTLE_MS.qc, { name: 'qc', shouldSkip: () => scraping || adopting });
       // Wait for the scoring controls + both tabs to be ready before scraping.
       try {
         await Utils.waitFor(() => getTabs().length >= 2 && scoreableTrans().length > 0, 8000);
@@ -1047,6 +1025,9 @@
       }
       cursor.reset({ silent: true }); // land on Trans1 (render() paints it once the scrape lands)
       await scrapeBoth();
+      // The panel grows once the first scrape fills in the summary/header, so the clamp in applySavedPos (which ran
+      // against the empty panel) can leave its bottom off-screen; clamp again now that it has its real height.
+      if (panelEl) Utils.clampIntoView(panelEl);
       log(`Started ${VERSION}`);
     }
 

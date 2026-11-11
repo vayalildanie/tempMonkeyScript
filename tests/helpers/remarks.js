@@ -3,32 +3,43 @@
 // so every lookup accepts both spellings.
 const { expect } = require('@playwright/test');
 
+// Trans number of a Remarks module label ("Trans3 Remarks" or "Trans 2
+// Remarks"), or null. Page-side code can't close over this, so it is passed
+// into page.evaluate as source text.
+function transNumFromRemarksLabel(label) {
+  const m = /^Trans ?(\d+) Remarks$/.exec(label || '');
+  return m ? parseInt(m[1], 10) : null;
+}
+const TRANS_NUM_SRC = transNumFromRemarksLabel.toString();
+
 // Page-side Remarks values as NOVA's own field delivers them: the native value
 // setter, then an `input` event unless `input: false` (a platform lazy load
 // fires none). `map` is { n: text }.
 function setRemarks(page, map, { input = true } = {}) {
-  return page.evaluate(({ map, input }) => {
+  return page.evaluate(({ map, input, src }) => {
+    const transNumFromRemarksLabel = (0, eval)(`(${src})`);
     Object.keys(map).forEach((k) => {
       const mod = Array.from(document.querySelectorAll('[data-module-name]'))
-        .find((m) => new RegExp(`^Trans ?${k} Remarks$`).test(m.getAttribute('data-module-name')));
+        .find((m) => transNumFromRemarksLabel(m.getAttribute('data-module-name')) === Number(k));
       const ta = mod.querySelector('textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, map[k]);
       if (input) ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
-  }, { map, input });
+  }, { map, input, src: TRANS_NUM_SRC });
 }
 const setRemark = (page, n, text, opts) => setRemarks(page, { [n]: text }, opts);
 
 // { n: value } of every Remarks textarea on the page.
 function remarksValues(page) {
-  return page.evaluate(() => {
+  return page.evaluate((src) => {
+    const transNumFromRemarksLabel = (0, eval)(`(${src})`);
     const out = {};
     document.querySelectorAll('[data-module-name]').forEach((mod) => {
-      const m = /^Trans ?(\d+) Remarks$/.exec(mod.getAttribute('data-module-name'));
-      if (m && !(m[1] in out)) out[m[1]] = mod.querySelector('textarea').value;
+      const n = transNumFromRemarksLabel(mod.getAttribute('data-module-name'));
+      if (n !== null && !(n in out)) out[n] = mod.querySelector('textarea').value;
     });
     return out;
-  });
+  }, TRANS_NUM_SRC);
 }
 
 // Polls until the listed translations' Remarks equal `expected` ({ n: text }).
@@ -43,10 +54,13 @@ async function expectRemarks(page, expected) {
 
 // Trans numbers of the Remarks modules carrying the composer's target highlight.
 function activeTargets(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll('.rmd-active-target')).map((el) => {
-    const m = /^Trans ?(\d+) Remarks$/.exec(el.getAttribute('data-module-name') || '');
-    return m ? parseInt(m[1], 10) : el.getAttribute('data-module-name');
-  }));
+  return page.evaluate((src) => {
+    const transNumFromRemarksLabel = (0, eval)(`(${src})`);
+    return Array.from(document.querySelectorAll('.rmd-active-target')).map((el) => {
+      const n = transNumFromRemarksLabel(el.getAttribute('data-module-name'));
+      return n !== null ? n : el.getAttribute('data-module-name');
+    });
+  }, TRANS_NUM_SRC);
 }
 
 // Polls until exactly Trans `n` is the composer's target. `message` names the

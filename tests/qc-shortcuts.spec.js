@@ -52,10 +52,49 @@ test.describe('score keys', { tag: '@logic' }, () => {
     await expectScore(page, 1, '');
     await expectScore(page, 4, '3 Points');
   });
+
+  test('S/W step the selection and D/A toggle the column, like the arrow keys', async ({ page }) => {
+    await page.keyboard.press('s');
+    await expectSelected(page, 2);
+    await page.keyboard.press('w');
+    await expectSelected(page, 1);
+    await page.keyboard.press('d');
+    await expectSelected(page, 4);
+    await page.keyboard.press('a');
+    await expectSelected(page, 1);
+  });
 });
 
 test.describe('label menu', { tag: '@logic' }, () => {
   test.beforeEach(async ({ page }) => { await bootQC(page); });
+
+  // Review Focus #1: with the menu open, ArrowDown steps the selection on (leaving the menu behind); S does the same,
+  // and the digit pick still works on a fresh menu afterwards. D/A toggle the column like ArrowRight/Left.
+  test('S moves the selection on with the label menu open, exactly as ArrowDown does', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('ArrowDown');
+    await expectSelected(page, 2);
+    const arrowState = { score1: await scoreValue(page, 1), expanded1: await expanded(page, 1) };
+
+    await page.keyboard.press('ArrowUp');
+    await expectSelected(page, 1);
+    await page.keyboard.press('s');
+    await expectSelected(page, 2);
+    expect({ score1: await scoreValue(page, 1), expanded1: await expanded(page, 1) }).toEqual(arrowState);
+  });
+
+  test('D toggles the column with the label menu open, exactly as ArrowRight does, and a digit pick still lands afterwards', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('d');
+    await expectSelected(page, 4);
+    await page.keyboard.press('a');
+    await expectSelected(page, 1);
+    // The menu on Trans1 is still the live one (a column toggle leaves it open): a digit still picks from it.
+    await expect.poll(() => expanded(page, 1)).toBe('true');
+    await page.keyboard.press('4');
+    await expectScore(page, 1, '2 Points / Fluency');
+    await expectSelected(page, 1);
+  });
 
   test('opens the label menu without advancing when 2 is pressed', async ({ page }) => {
     await openLabelMenu(page, 1);
@@ -78,6 +117,17 @@ test.describe('label menu', { tag: '@logic' }, () => {
       await expectSelected(page, 1);
     });
   }
+
+  // The fixture's first label (key 1) is the category "Grammar" with exactly
+  // one leaf, also "Grammar" (the same fixture Task 11 used for Scoring Shortcuts).
+  test('selects the lone sub-label too when a category with exactly one sub-label is picked with 1', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('1');
+    await expectScore(page, 1, '2 Points / Grammar / Grammar');
+    await expect.poll(() => expanded(page, 1)).toBe('false');
+    await expect.poll(() => cursorStatus(page)).toBe('Trans1 = 2 Points / Grammar / Grammar ✓');
+    await expectSelected(page, 1);
+  });
 
   test('closes the menu and keeps bare 2 Points when Escape is pressed with the menu open', async ({ page }) => {
     await openLabelMenu(page, 1);
@@ -112,7 +162,7 @@ test.describe('help toggle', { tag: '@logic' }, () => {
 });
 
 test.describe('guards', { tag: '@logic' }, () => {
-  const KEYS = ['z', '3', 'c', 'x', 'o', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'];
+  const KEYS = ['z', '3', 'c', 'x', 'o', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'];
 
   test('ignores every shortcut when a remark textarea has focus or a modifier is held', async ({ page }) => {
     await bootQC(page);

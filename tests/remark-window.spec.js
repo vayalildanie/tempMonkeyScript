@@ -103,3 +103,142 @@ test.describe('window re-created by the page', { tag: '@logic' }, () => {
     await expect.poll(() => page.evaluate(() => document.body.classList.contains('rmd-active'))).toBe(false);
   });
 });
+
+// W-HEAD / W-BODY: the header controls stay in the window's top-right corner at
+// every width, and any extra height goes to the edit box.
+test.describe('window layout', { tag: '@layout' }, () => {
+  test.use({ viewport: { width: 1280, height: 1000 } });
+
+  const MIN_W = 300; // = POPOVER_MIN_W in src/remark-composer.js
+  const MIN_H = 260; // = POPOVER_MIN_H
+
+  async function openAt(page, w, h) {
+    await bootWithSaved(page, null);
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await page.evaluate(([w, h]) => {
+      const p = document.getElementById('rmd-popover');
+      p.style.left = '20px'; p.style.top = '20px';
+      p.style.width = w + 'px'; p.style.height = h + 'px';
+    }, [w, h]);
+  }
+
+  const controls = (page) => page.evaluate(() => {
+    const p = document.getElementById('rmd-popover').getBoundingClientRect();
+    const out = { pop: { left: p.left, top: p.top, right: p.right, bottom: p.bottom } };
+    for (const id of ['settings', 'clear', 'close']) {
+      const r = document.getElementById(`rmd-${id}-btn`).getBoundingClientRect();
+      out[id] = { left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+        fromRight: p.right - r.right, fromTop: r.top - p.top };
+    }
+    return out;
+  });
+
+  test('header controls stay inside the window and keep their corner offsets at every width', async ({ page }) => {
+    await openAt(page, 380, 420);
+    const ref = await controls(page);
+    for (const w of [MIN_W, 340, 380, 520, 900]) {
+      await page.evaluate((w) => { document.getElementById('rmd-popover').style.width = w + 'px'; }, w);
+      const c = await controls(page);
+      for (const id of ['settings', 'clear', 'close']) {
+        const b = c[id];
+        expect(b.left, `${id} @${w}`).toBeGreaterThanOrEqual(c.pop.left);
+        expect(b.right, `${id} @${w}`).toBeLessThanOrEqual(c.pop.right);
+        expect(b.top, `${id} @${w}`).toBeGreaterThanOrEqual(c.pop.top);
+        expect(b.bottom, `${id} @${w}`).toBeLessThanOrEqual(c.pop.bottom);
+        expect(Math.abs(b.fromRight - ref[id].fromRight), `${id} right offset @${w}`).toBeLessThanOrEqual(1);
+        expect(Math.abs(b.fromTop - ref[id].fromTop), `${id} top offset @${w}`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  test('at the minimum width the badge still names its mode and the header does not overflow', async ({ page }) => {
+    await openAt(page, MIN_W, 420);
+    const r = await page.evaluate(() => {
+      const head = document.getElementById('rmd-head');
+      return { title: document.getElementById('rmd-check-badge').getAttribute('title'),
+        sw: head.scrollWidth, cw: head.clientWidth };
+    });
+    expect(r.title).toMatch(/Label Check|Submit Check|Check Off/i);
+    expect(r.sw).toBeLessThanOrEqual(r.cw);
+  });
+
+  test('a tall window gives the extra height to the edit box, leaving no dead space', async ({ page }) => {
+    await openAt(page, 380, 800);
+    const r = await page.evaluate(() => {
+      const p = document.getElementById('rmd-popover');
+      const pr = p.getBoundingClientRect();
+      let lastBottom = 0;
+      for (const ch of p.children) {
+        if (ch.id === 'rmd-resize-handle') continue;
+        const cr = ch.getBoundingClientRect();
+        if (getComputedStyle(ch).display === 'none' || cr.height === 0) continue;
+        lastBottom = Math.max(lastBottom, cr.bottom);
+      }
+      const pal = document.getElementById('rmd-palette');
+      return { editH: document.getElementById('rmd-edit').getBoundingClientRect().height, gap: pr.bottom - lastBottom,
+        palH: pal.clientHeight,
+        palContent: Math.max(...Array.from(pal.querySelectorAll('.rmd-chip')).map((c) => c.getBoundingClientRect().bottom - pal.getBoundingClientRect().top)) + parseFloat(getComputedStyle(pal).paddingBottom) };
+    });
+    expect(r.editH).toBeGreaterThan(72);
+    expect(r.gap).toBeLessThanOrEqual(24);
+    // The palette keeps its natural height: not stretched past its content, not capped below it.
+    expect(Math.abs(r.palH - r.palContent), JSON.stringify(r)).toBeLessThanOrEqual(1);
+    // Narrower, the chips wrap into a taller palette: with room to spare it must not scroll.
+    await page.evaluate((w) => { document.getElementById('rmd-popover').style.width = w + 'px'; }, MIN_W);
+    const scrolls = await page.evaluate(() => {
+      const pal = document.getElementById('rmd-palette');
+      return { client: pal.clientHeight, scroll: pal.scrollHeight };
+    });
+    expect(scrolls.scroll, JSON.stringify(scrolls)).toBeLessThanOrEqual(scrolls.client + 1);
+    // No fixed cap: a longer chip set must be able to take its natural height too.
+    expect(await page.evaluate(() => getComputedStyle(document.getElementById('rmd-palette')).maxHeight)).toBe('none');
+  });
+
+  test('at the minimum size the palette, edit box and header controls are all visible', async ({ page }) => {
+    await openAt(page, MIN_W, MIN_H);
+    const r = await page.evaluate(() => {
+      const p = document.getElementById('rmd-popover').getBoundingClientRect();
+      const vis = (id) => {
+        const b = document.getElementById(id).getBoundingClientRect();
+        return b.width > 0 && b.height > 0 && b.left >= p.left && b.right <= p.right && b.top >= p.top && b.bottom <= p.bottom;
+      };
+      return { palH: document.getElementById('rmd-palette').getBoundingClientRect().height,
+        edit: vis('rmd-edit'), settings: vis('rmd-settings-btn'), clear: vis('rmd-clear-btn'), close: vis('rmd-close-btn') };
+    });
+    expect(r.palH).toBeGreaterThanOrEqual(64);
+    expect(r).toMatchObject({ edit: true, settings: true, clear: true, close: true });
+  });
+
+  test('the header compacts only below 380px (badge label) and below 340px (title text), measured as the window width', async ({ page }) => {
+    await openAt(page, 380, 420);
+    const shown = (sel) => page.evaluate((s) => getComputedStyle(document.querySelector(s)).display !== 'none', sel);
+    const setW = (w) => page.evaluate((w) => { document.getElementById('rmd-popover').style.width = w + 'px'; }, w);
+    for (const [w, label, title] of [[380, true, true], [379, false, true], [340, false, true], [339, false, false]]) {
+      await setW(w);
+      expect(await shown('.rmd-badge-label'), `badge label @${w}`).toBe(label);
+      expect(await shown('.rmd-title-text'), `title text @${w}`).toBe(title);
+    }
+  });
+
+  test('the edit box has no resize grip of its own', async ({ page }) => {
+    await openAt(page, 380, 420);
+    expect(await page.evaluate(() => getComputedStyle(document.getElementById('rmd-edit')).resize)).toBe('none');
+  });
+
+  test('typing, chips, Q and Escape still work at a resized width', async ({ page }) => {
+    await openAt(page, MIN_W, 420);
+    await expectTarget(page, 1);
+    await edit(page).click();
+    await page.keyboard.type('ab');
+    await expectRemarks(page, { 1: 'ab' });
+    await page.locator('.rmd-chip[data-chip="Strange"]').click();
+    await expect(edit(page)).toHaveValue('ab, Strange');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('q'); // nothing selected: puts the caret back in the box
+    await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('rmd-edit');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#rmd-popover')).toBeHidden();
+  });
+});

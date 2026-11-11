@@ -24,6 +24,7 @@
     spaceEvents: [],
     lastSubmit: null,
     failNextLeaf: false,
+    wrongNextValue: null, // test-only: a string; the next pick displays it instead of the picked value
   };
 
   function pathKeyOf(li) {
@@ -210,7 +211,13 @@
       return;
     }
 
-    setDisplayed(root, displayFromKey(key, previous));
+    // Test-only: make the next pick land on a different value than the one clicked.
+    var landed = displayFromKey(key, previous);
+    if (window.__fixture.wrongNextValue) {
+      landed = window.__fixture.wrongNextValue;
+      window.__fixture.wrongNextValue = null;
+    }
+    setDisplayed(root, landed);
     ensureClear(root);
     closeDropdown(root);
   }

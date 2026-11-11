@@ -359,6 +359,28 @@ test.describe('Z guards and mouse', { tag: '@logic' }, () => {
     await expectUnit(page, 1, A(1));
     await expectSelected(page, 1);
   });
+
+  test('flips when the red badge text is clicked on Annotator 1\'s tab, the same as the Adopt button', async ({ page }) => {
+    await bootQC(page);
+    await badge(page, 1).locator('.qc-bd-val').click({ position: { x: 4, y: 4 } }); // not on the Adopt button
+    await expectUnit(page, 1, B(1));
+    await expectSelected(page, 1);
+    await badge(page, 1).locator('.qc-undo').click();
+    await expectUnit(page, 1, A(1));
+  });
+
+  test('does nothing when the red badge is clicked on Annotator 2\'s tab', async ({ page }) => {
+    await bootQC(page);
+    await clickTab(page, 1);
+    const before = await Promise.all(SCOREABLE.map((n) => unit(page, n)));
+    const target = badge(page, 1).locator('.qc-bd-val');
+    await expect(target).toBeVisible();
+    await target.click({ position: { x: 4, y: 4 } });
+    await page.waitForTimeout(500);
+    expect(await Promise.all(SCOREABLE.map((n) => unit(page, n)))).toEqual(before);
+    await clickTab(page, 0);
+    await expectUnit(page, 1, A(1)); // Annotator 1 was never written
+  });
 });
 
 test.describe('reconcile summary', { tag: '@logic' }, () => {

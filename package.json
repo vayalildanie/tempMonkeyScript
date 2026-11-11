@@ -4,7 +4,8 @@
   "description": "Tampermonkey userscript tests. Production files stay plain JavaScript with no build step.",
   "scripts": {
     "test": "playwright test",
-    "capture": "node scripts/capture-ingest.js"
+    "coverage": "node scripts/coverage-run.js",
+    "capture":"node scripts/capture-ingest.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0"

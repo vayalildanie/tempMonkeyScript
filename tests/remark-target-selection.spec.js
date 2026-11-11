@@ -217,6 +217,56 @@ test.describe('arrow movement', { tag: '@logic' }, () => {
     await page.keyboard.press('ArrowDown');
     expect(await activeTargets(page)).toEqual([]);
   });
+
+  // WASD are aliases of the arrow keys (v1.5.5), only while focus is outside a text box.
+  test('the first W jumps to Trans1 and later S/W step, clamp and skip the empty Trans3 when the target starts below Trans1', async ({ page }) => {
+    await setScores(page, lateScoring);
+    await openComposer(page);
+    await expectTarget(page, 4);
+    await page.keyboard.press('w');
+    await expectTarget(page, 1);
+    await page.keyboard.press('w');
+    await expectTarget(page, 1); // clamped
+    await page.keyboard.press('s');
+    await expectTarget(page, 2);
+    await page.keyboard.press('s');
+    await expectTarget(page, 4); // empty Trans3 is skipped
+    await page.keyboard.press('w');
+    await expectTarget(page, 2);
+  });
+
+  test('A and D toggle the column like ArrowLeft and ArrowRight', async ({ page }) => {
+    await setScores(page, lateScoring);
+    await openComposer(page);
+    await expectTarget(page, 4);
+    await page.keyboard.press('a');
+    await expectTarget(page, 1, 'A toggles to the left column');
+    await page.keyboard.press('d');
+    await expectTarget(page, 4, 'D toggles back to the right column');
+  });
+
+  test('w/a/s/d select no target when the composer is closed', async ({ page }) => {
+    for (const k of ['w', 'a', 's', 'd']) await page.keyboard.press(k);
+    expect(await activeTargets(page)).toEqual([]);
+  });
+
+  test('s and d typed into #rmd-edit or a NOVA Remarks textarea appear as text and leave the target alone', async ({ page }) => {
+    await keepComposerClear(page);
+    await setScores(page, lateScoring);
+    await openComposer(page);
+    await expectTarget(page, 4);
+
+    await edit(page).click();
+    await page.keyboard.type('sdwa');
+    await expect(edit(page)).toHaveValue('sdwa');
+    await expectTarget(page, 4, '#rmd-edit: WASD typed as text must not move the target');
+
+    await remarkField(page, 5).click();
+    await expectTarget(page, 5);
+    await page.keyboard.type('sdwa');
+    await expect(remarkField(page, 5)).toHaveValue('sdwa');
+    await expectTarget(page, 5, 'NOVA textarea: WASD typed as text must not move the target');
+  });
 });
 
 test.describe('highlight', { tag: '@logic' }, () => {

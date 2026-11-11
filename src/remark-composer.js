@@ -31,6 +31,7 @@
     const CFG = {
       keyOpen: 'o',        // open/close this window
       keyCycleCheck: 'z',  // cycles the submit check: Label Check → Submit Check → Check Off
+      keyQuote: 'q',       // quotes the selected text into the target's remark
     };
 
     // The submit check's 3-way mode: whether/how Enter is held back while any
@@ -96,7 +97,6 @@
     let pinned = false;            // true once the user has manually dragged the popover — stop auto-repositioning it
     let lastMouseX = window.innerWidth / 2, lastMouseY = 150; // where the popover appears when opened via O
     let lastRowSig = '';
-    let settleTimer = null;
     let hintTimer = null;
     let loadedTarget = null;       // Trans number whose Remarks text is currently loaded into #rmd-edit
     let jumpPending = false;       // the one-shot "first ArrowUp goes to Trans1" is still unspent
@@ -109,7 +109,10 @@
     // a first-ever open, before anything's been saved.
     const POPOVER_DEFAULT_W = 380;  // matches the original fixed CSS width
     const POPOVER_DEFAULT_H = 420;  // nominal default; tune this constant if it looks off in practice
-    const POPOVER_MIN_W = 300;      // keeps the header buttons (⚙/Clear/✕) from crowding
+    // Measured (v1.5.5): the header's compact form (📝 + icon-only badge + ⚙/Clear/✕ + paddings
+    // and gaps) fits from ~214px (measured). 300 is kept as the existing floor (the spec only allows
+    // raising it). Keep #rmd-popover's CSS min-width in step.
+    const POPOVER_MIN_W = 300;
     const POPOVER_MIN_H = 260;      // keeps header + edit box + hint usable
     const RMD_POS_KEY = 'trans-tool:nova-remark-pos-v1';
     const RMD_SIZE_KEY = 'trans-tool:nova-remark-size-v1';
@@ -199,24 +202,14 @@
     // The platform nests duplicate `font[data-module-name]` wrappers for one
     // module, and re-renders can replace the nodes, so everything is looked up
     // live by Trans NUMBER and the first match wins (one target per number).
-    function modulesBySuffix(suffix) {
-      const map = new Map();
-      document.querySelectorAll('[data-module-name]').forEach((mod) => {
-        const n = Utils.transNumFromModuleName(mod, suffix);
-        if (n !== null && !map.has(n)) map.set(n, mod);
-      });
-      return map;
-    }
+    const modulesBySuffix = Utils.modulesBySuffix;
     function remarkModule(n) { return modulesBySuffix(' Remarks').get(n) || null; }
-    function remarkTextarea(n) {
-      const m = n == null ? null : remarkModule(n);
-      return m ? m.querySelector('textarea') : null;
-    }
+    const remarkTextarea = Utils.remarkTextarea;
     function scoreText(n) {
       return Utils.readSelected(modulesBySuffix(' Score').get(n));
     }
     function writeTarget(text) {
-      const ta = remarkTextarea(cursor.get());
+      const ta = Utils.remarkTextarea(cursor.get());
       if (!ta) return;
       writingTarget = true;
       try { Utils.setNativeValue(ta, text); }
@@ -313,15 +306,12 @@
     // ---------- Building the remark text ----------
 
     // Smart separator between tokens, based on what's already in the box:
-    // quote → phrase: ": "   phrase → phrase: ", "   anything → quote: two spaces.
+    // anything → quote: two spaces   anything → phrase: ", "   (nothing yet: no separator).
     function separatorFor(tail, newKind) {
       const t = tail.replace(/\s+$/, '');
       if (t === '') return '';
-      const prevKind = /"[^"]*"$/.test(t) ? 'quote' : 'phrase'; // a trailing "…" is a quote (also the old Trans N "…" form)
-      if (prevKind === 'quote' && newKind === 'phrase') return ': ';
-      if (prevKind === 'phrase' && newKind === 'phrase') return ', ';
       if (newKind === 'quote') return '  ';
-      return '';
+      return ', ';
     }
 
     // Append a token to our own editable textarea, then mirror the result
@@ -514,9 +504,8 @@
     // wider (Ctrl-A, two translations, Note plus a translation, Context-EN, a
     // title plus its text, the Note's Collapse control or picture list) is
     // refused and writes nothing.
-    // Known gaps: text containing `"` is not escaped, pressing Q twice on the
-    // same selection appends twice, and multi-line selections keep their
-    // internal newlines.
+    // Known gaps: text containing `"` is not escaped (by decision), and
+    // multi-line selections keep their internal newlines.
     //
     // The quotable sources, each a group of elements that count as one source: a translation is its
     // `.preview-content`; the Note is its heading plus its body text (`.content-box`). The Note module also holds
@@ -583,7 +572,15 @@
         setHint('Select text inside one translation or the Note to quote it.');
         return false;
       }
-      appendToken(`"${text}"`, 'quote');
+      const token = `"${text}"`;
+      // Q again on a selection whose quote already ends the remark is a no-op. An exact trailing match, so a
+      // longer or shorter overlapping quote ("cat" then "cats") still counts as new.
+      if (previewEl && previewEl.value.replace(/\s+$/, '').endsWith(token)) {
+        setHint('Already quoted.');
+        if (selObj.removeAllRanges) selObj.removeAllRanges();
+        return false;
+      }
+      appendToken(token, 'quote');
       if (selObj.removeAllRanges) selObj.removeAllRanges();
       return true;
     }
@@ -761,6 +758,7 @@
         #rmd-popover {
           position: fixed; z-index: 2147483647; width: 380px; max-width: 92vw;
           min-width: 300px; min-height: 260px; box-sizing: border-box;
+          container-type: inline-size; overflow: hidden;
           background: #fff; border: 1px solid #d9d9e3; border-radius: 12px;
           box-shadow: 0 10px 32px rgba(0,0,0,.18);
           font: 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color: #1f2430;
@@ -770,15 +768,25 @@
           display: flex; align-items: center; gap: 6px; padding: 10px 12px;
           border-bottom: 1px solid #eee; cursor: move; user-select: none;
         }
-        #rmd-head .rmd-title { font-weight: 700; white-space: nowrap; }
+        #rmd-head .rmd-title {
+          font-weight: 700; white-space: nowrap; flex: 0 1 auto; min-width: 0;
+          overflow: hidden; text-overflow: ellipsis;
+        }
+        #rmd-head .rmd-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+        #rmd-head #rmd-check-badge { flex: none; margin-left: auto; } /* takes the free space, so badge + actions hug the right edge */
+        /* Compact steps (V1): badge to its icon below 380px, title to the icon below 340px, measured as the
+           window's width. The container is the popover's CONTENT box, which is 2px narrower than the window
+           (1px border each side), so the thresholds are 2px lower: 377 = window < 380, 337 = window < 340. */
+        @container (max-width: 377px) { #rmd-head .rmd-badge-label { display: none; } }
+        @container (max-width: 337px) { #rmd-head .rmd-title-text { display: none; } }
         #rmd-head button {
           border: 1px solid #dde1e6; background: #fff; color: #6b7280; border-radius: 7px;
           padding: 3px 9px; font-weight: 600; cursor: pointer; line-height: 1.4;
         }
         #rmd-palette {
           display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
-          padding: 10px 12px; max-height: 220px; overflow: auto;
-          flex: 1; min-height: 0;
+          padding: 10px 12px; overflow: auto;
+          flex: 0 1 auto; min-height: 64px;
         }
         .rmd-chip-col { display: flex; flex-direction: column; gap: 4px; }
         .rmd-chip-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
@@ -789,6 +797,7 @@
         .rmd-chip:hover { filter: brightness(0.97); }
         #rmd-edit-wrap {
           position: relative; margin: 4px 12px 10px; border: 1px solid #d9d9e3; border-radius: 8px; overflow: hidden;
+          flex: 1 1 72px; min-height: 72px; display: flex;
         }
         #rmd-edit-bg, #rmd-edit {
           margin: 0; padding: 8px 10px; font: 12.5px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -798,7 +807,7 @@
           position: absolute; inset: 0; color: #334155; pointer-events: none; overflow: hidden; background: transparent;
         }
         #rmd-edit {
-          position: relative; height: 72px; resize: vertical; border: none; outline: none;
+          position: relative; height: 100%; resize: none; border: none; outline: none;
           background: transparent; color: transparent; caret-color: #1f2430;
         }
         #rmd-likely { padding: 0 12px 6px; font-size: 11px; color: #8a5a00; }
@@ -846,13 +855,14 @@
       p.id = 'rmd-popover';
       p.innerHTML = `
         <div id="rmd-head">
-          <span class="rmd-title">📝 Remark Options</span>
-          <span style="flex:1;"></span>
+          <span class="rmd-title"><span class="rmd-title-icon">📝</span><span class="rmd-title-text"> Remark Options</span></span>
           <span id="rmd-check-badge" title="Z cycles: Label Check → Submit Check → Check Off" style="
-            font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"></span>
-          <button id="rmd-settings-btn" title="Settings">⚙</button>
-          <button id="rmd-clear-btn" title="Clear">Clear</button>
-          <button id="rmd-close-btn" title="Close">✕</button>
+            font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700;white-space:nowrap;cursor:default;"><span class="rmd-badge-icon"></span><span class="rmd-badge-label"></span></span>
+          <span class="rmd-actions">
+            <button id="rmd-settings-btn" title="Settings">⚙</button>
+            <button id="rmd-clear-btn" title="Clear">Clear</button>
+            <button id="rmd-close-btn" title="Close">✕</button>
+          </span>
         </div>
         <div id="rmd-palette"></div>
         <div id="rmd-edit-wrap">
@@ -937,7 +947,14 @@
     function updateCheckBadge() {
       if (!checkBadgeEl) return;
       const s = CHECK_STYLES[CHECK_MODES[checkModeIdx]];
-      checkBadgeEl.textContent = s.text;
+      // Icon and label go in separate spans so a narrow window can show the icon
+      // alone (container query in injectStyle); the full mode name stays in title.
+      const sp = s.text.indexOf(' ');
+      const iconEl = checkBadgeEl.querySelector('.rmd-badge-icon');
+      const labelEl = checkBadgeEl.querySelector('.rmd-badge-label');
+      iconEl.textContent = s.text.slice(0, sp);
+      labelEl.textContent = s.text.slice(sp); // keeps the leading space between icon and label
+      checkBadgeEl.title = `${s.text.slice(sp + 1)} — Z cycles: Label Check → Submit Check → Check Off`;
       checkBadgeEl.style.background = s.bg;
       checkBadgeEl.style.color = s.fg;
       checkBadgeEl.style.border = `1px solid ${s.border}`;
@@ -1042,9 +1059,12 @@
 
       // Arrows move the remark target while the composer is open and focus is
       // outside any text-entry control (so the edit box keeps its caret keys).
-      if (active && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      // WASD act as the arrow keys; resolved only after the typing guard above so they still type in a text box.
+      const ARROW_ALIAS = { w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight' };
+      const key = ARROW_ALIAS[e.key.toLowerCase()] || e.key;
+      if (active && (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight')) {
         e.preventDefault();
-        moveTarget(e.key);
+        moveTarget(key);
         return;
       }
 
@@ -1066,8 +1086,8 @@
       } else if (k === CFG.keyCycleCheck) {
         e.preventDefault();
         cycleCheckMode();
-      } else if (k === 'q') {
-        // Q is this module's key everywhere: with the composer closed it
+      } else if (k === CFG.keyQuote) {
+        // The quote key (Q by default, configurable like the other two) works everywhere: with the composer closed it
         // opens at the initial target first, with it open it appends to the
         // currently highlighted target.
         e.preventDefault();
@@ -1079,54 +1099,47 @@
     // ====================================================================
     // Watching the page for changes (SPA row changes / re-renders)
     // ====================================================================
-    function getRowSig() {
-      const src = document.querySelector('[data-module-key="NoteTrans"]')
-        || document.querySelector('[data-module-name="Trans1"]');
-      return src ? src.textContent.trim().slice(0, 80) : '';
-    }
+    const getRowSig = Utils.rowSig;
 
     let autoAdvanceTimer = null; // pending auto-Enter for an empty row in Submit Check mode (moved here with the rest of the check system)
     function onMutate() {
-      clearTimeout(settleTimer);
-      settleTimer = setTimeout(() => {
-        if (!document.getElementById('rmd-popover')) { // re-inject if the platform wiped it
-          injectPopover();
-          // The new element starts hidden and empty; if the window was open, bring it back as it was.
-          if (active) { showPopover(); loadedTarget = null; loadProxy(); }
-        }
-        injectStyle();
-        const sig = getRowSig();
-        if (sig !== lastRowSig) {
-          lastRowSig = sig;
-          if (active) {
-            // Row changed while composer is open → the Remarks fields now
-            // belong to a different row; re-resolve the initial target and
-            // reload our proxy from it instead of carrying over old text.
-            resolveInitialTarget();
-          }
-          // Nothing to score on this row and Submit Check is on: a real
-          // Enter press would pass its completeness check vacuously anyway,
-          // so press it for the user after a 1s pause instead of leaving
-          // them stuck on a row with nothing to do. Goes through the exact
-          // same Enter handling as a real keypress (completeness check,
-          // toast, dispatchNativeSpace) — this never bypasses that check,
-          // it just supplies the keypress. Cleared on every row change so a
-          // stale timer can never fire against a row it wasn't scheduled for.
-          clearTimeout(autoAdvanceTimer);
-          if (!scoringShortcuts.checkCompleteness().scoreable.length && CHECK_MODES[checkModeIdx] === 'submit') {
-            autoAdvanceTimer = setTimeout(() => {
-              if (scoringShortcuts.checkCompleteness().scoreable.length) return; // translations rendered meanwhile: a real row
-              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-            }, 1000);
-          }
-        }
+      if (!document.getElementById('rmd-popover')) { // re-inject if the platform wiped it
+        injectPopover();
+        // The new element starts hidden and empty; if the window was open, bring it back as it was.
+        if (active) { showPopover(); loadedTarget = null; loadProxy(); }
+      }
+      injectStyle();
+      const sig = getRowSig();
+      if (sig !== lastRowSig) {
+        lastRowSig = sig;
         if (active) {
-          cursor.sync();          // re-anchor to the live targets after any re-render
-          applyTargetHighlight(); // restore the highlight if the module node was replaced
-          updateLikely();
-          syncPreview();
+          // Row changed while composer is open → the Remarks fields now
+          // belong to a different row; re-resolve the initial target and
+          // reload our proxy from it instead of carrying over old text.
+          resolveInitialTarget();
         }
-      }, 250);
+        // Nothing to score on this row and Submit Check is on: a real
+        // Enter press would pass its completeness check vacuously anyway,
+        // so press it for the user after a 1s pause instead of leaving
+        // them stuck on a row with nothing to do. Goes through the exact
+        // same Enter handling as a real keypress (completeness check,
+        // toast, dispatchNativeSpace) — this never bypasses that check,
+        // it just supplies the keypress. Cleared on every row change so a
+        // stale timer can never fire against a row it wasn't scheduled for.
+        clearTimeout(autoAdvanceTimer);
+        if (!scoringShortcuts.checkCompleteness().scoreable.length && CHECK_MODES[checkModeIdx] === 'submit') {
+          autoAdvanceTimer = setTimeout(() => {
+            if (scoringShortcuts.checkCompleteness().scoreable.length) return; // translations rendered meanwhile: a real row
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          }, 1000);
+        }
+      }
+      if (active) {
+        cursor.sync();          // re-anchor to the live targets after any re-render
+        applyTargetHighlight(); // restore the highlight if the module node was replaced
+        updateLikely();
+        syncPreview();
+      }
     }
 
     // ====================================================================
@@ -1146,8 +1159,7 @@
       document.addEventListener('click', onNovaRemarksClick, true);
       document.addEventListener('mousemove', (e) => { lastMouseX = e.clientX; lastMouseY = e.clientY; });
       window.addEventListener('resize', () => { if (active && popover) fitPopover(popover); }); // a smaller window must not strand the open one
-      const mo = new MutationObserver(onMutate);
-      mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+      Utils.observeSettled(onMutate, Utils.SETTLE_MS.remark, { characterData: true, name: 'remark' });
       rlog('Started');
     }
 

@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.4`, on `main`.** It is covered by an automated
+> **Current version: `v1.5.5`, on `release/v1.5.5` (not yet merged to `main`).** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -106,12 +106,22 @@ simulator (its file name must start with `quality_` so the module starts).
 
 The specs are grouped by purpose (`scoring`, `submit-check`,
 `remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
-`qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`,
-`capture-contract`) and tagged `@logic` (behavior), `@contract` (selector and
-fixture contracts) or `@layout` (viewport and legend). `npx playwright test
+`qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
+`capture-contract` — 14 files, 257 tests as of `v1.5.5`) and tagged `@logic`
+(behavior), `@contract` (selector and fixture contracts), `@layout` (viewport
+and legend) or `@perf` (mutation and render counts). `npx playwright test
 --grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/
 test-behavior-map.md` maps every tested behavior to the tests that cover it
 and lists the behaviors that have none.
+
+`npm run coverage` prints a per-file line and function coverage report and
+fails if total line coverage falls below `tests/coverage-baseline.json` (a
+ratchet that is only ever raised). Left uncovered on purpose: the `catch` and
+`.catch(() => {})` callbacks that run only when NOVA's own dropdown fails or
+times out (QC Compare's `writeCascade`, `clearCascade`, `relabel` and `erase`;
+Scoring Shortcuts' `setScore` throw), and the QC start-up 8s ready-timeout
+log. Testing them would need fault injection and real waits, and would only
+prove an error path stays quiet. See `PLANNING/reports/v1.5.5/ledger.md`.
 
 `@require` has no code-splitting — every file above downloads and executes
 on every matching page load, regardless of URL. Which module is actually
@@ -156,8 +166,8 @@ entirely rather than carried along. See `src/scoring-shortcuts.js` and
 | `2` | Score it "2 Points", stay put — leaves the label menu open |
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item (`0` = the 10th). The pick only advances once the displayed value has actually changed to a completed label; if the click didn't take, it stays put and says so |
 | `X` | Clear the active translation's score, stay put |
-| `↑` / `↓` | Move the active translation |
-| `←` / `→` | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
+| `↑` / `↓` (or `W` / `S`) | Move the active translation |
+| `←` / `→` (or `A` / `D`) | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
 | `P` | Show/hide the shortcuts panel — works even while shortcuts are OFF |
 | `Esc` | Cancel an in-progress label pick |
 
@@ -170,7 +180,7 @@ since the submit check is a page-level guard, not a composer-UI feature)
 | Key | Effect |
 |---|---|
 | `O` | Open/close the Remark Options window. On open, the Remarks box of the first translation *with text* that isn't scored 3 Points is selected and outlined (empty/unscored counts); Trans1 if every score begins with 3 Points |
-| `↑` / `↓` / `←` / `→` | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). The first `↑` jumps to Trans1 unless an arrow, Remarks click, or direct Remarks edit has already consumed that shortcut |
+| `↑` / `↓` / `←` / `→` (or `W` / `S` / `A` / `D`) | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). The first `↑` jumps to Trans1 unless an arrow, Remarks click, or direct Remarks edit has already consumed that shortcut |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
 | `Enter` | Run the check now, safely — blocks on an incomplete label, or on a fully labelled non-3-Points translation whose own Remarks box is empty or only whitespace, per the current check mode (Label Check and Submit Check; Check Off never blocks). The blocked toast names each translation and whether its label or its remark is missing. In Submit Check mode, a clean pass also submits (synthesizes Space) |
 | `Q` | Quote the current selection into the highlighted Remarks box as `"…"` (no `Trans N` or `Note` prefix). Quotable sources are a translation's text and the left-hand Note field; the whole selection must lie inside one of them, so select-all, a selection across two translations, Note plus a translation, Context-EN, or a title plus its text is refused and writes nothing. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box |
@@ -187,6 +197,11 @@ input. Popover edits, chips, and Clear update only that selected field.
 Both selection methods skip empty translations while others have text;
 when all are empty, all discovered Remarks fields are available. Clicks and
 edits while the popover is closed do not change its next initial target.
+
+Joining: a chip (or any phrase) added after existing text is joined with
+`", "` — including right after a quote, where the old `": "` is gone. A quote
+added after existing text is joined with two spaces. `Q` pressed twice on the
+same selection writes the quote once.
 
 Under the edit box a "Likely need remarks" line lists translations scored
 `2 Points` (bare or fully labelled) or `Confusing`; `3 Points` and unscored
@@ -211,8 +226,8 @@ window reset to a fixed size every time it was reopened.
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item |
 | `X` | Clear the active translation's score |
 | `Z` | Flip the active translation's Score **and** Remark between Annotator 1's and Annotator 2's original values (press again on it to flip back). Both originals are kept for the row, so if you clear or edit either side, `Z` restores from them instead of stopping. A hand-edited unit is noted in the badge before it is overwritten. Every `Z` that writes moves on to the next translation (to flip one back, step up and press `Z`); a refused `Z` stays put (Annotator 2's tab is showing, nothing differs, or Annotator 2 has no score) |
-| `↑` / `↓` | Move the active translation. Its Score and its Remarks box are outlined together; the Swap/Undo badge stays between them |
-| `←` / `→` | Swap columns (Trans1–3 / Trans4–7) |
+| `↑` / `↓` (or `W` / `S`) | Move the active translation. Its Score and its Remarks box are outlined together; the Swap/Undo badge stays between them |
+| `←` / `→` (or `A` / `D`) | Swap columns (Trans1–3 / Trans4–7) |
 | `O` | Show/hide the help/legend panel — same toggle as its own `▸`/`▾` triangle (moved from `P` in `v1.4.0`, to match Module 2's open/close key — the two modules are URL-exclusive so there's no clash) |
 | `Esc` | Cancel an in-progress label pick |
 
@@ -375,11 +390,32 @@ around it:
   original; the header comment was simply stale. (Module 3 only gained real
   arrow-key navigation later, in `v1.3.2`.)
 
-## Known unverified (as of `v1.5.0`)
+## Known unverified (as of `v1.5.5`)
 
 Things the automated suite cannot prove, because the fixture is a *model* of
 the page and the captured HTML contains no event listeners. Check these on a
-real annotation row:
+real annotation row (`PLANNING/reports/v1.5.5/live-checklist.md` has the
+step-by-step). Items marked `v1.5.5` are new in this release; the rest were
+listed under earlier versions and are still unchecked on live NOVA:
+
+- **`v1.5.5` Remark Options header.** The pinned header, its three buttons
+  staying in the corner while resizing from widest to narrowest, and extra
+  height going to the edit box, were checked against the fixture only. At the
+  default 380px width the title already shortens to "Remark Optio…" and the
+  palette's 5th column clips; whether that reads acceptably live is a
+  judgment call.
+- **`v1.5.5` Observer filtering under live re-renders.** The script now
+  ignores mutations inside its own UI. That it still notices NOVA's real
+  re-renders (a scored row's highlight returning, a row change on both
+  pages) is proven against the fixture's imitation of a re-render, not
+  against NOVA's.
+- **`v1.5.5` QC Compare panel-fit.** Pulling the panel back on-screen after a
+  resize or a position saved on a wider monitor. The panel is also taller
+  than a short screen and its bottom can still be cut off (known,
+  pre-existing; height is not clamped).
+- **`v1.5.5` W/A/S/D as arrows** on live NOVA: that the page does not use
+  those keys itself, and that typing `w`/`a`/`s`/`d` in a Remarks box still
+  just types.
 
 - **Submit Check → Space.** The page's real Space listener is not in the
   capture. The `v1.5.0` fix assumes NOVA ignores Space aimed at an input and
@@ -412,6 +448,37 @@ real annotation row:
   outline looks against the live layout.
 
 ## Version history
+
+### `v1.5.5` — QC idle loop fixed, Remark Options header pinned, W/A/S/D, comma join
+
+- **QC Compare no longer re-renders forever while idle.** An untouched QC row
+  used to keep producing page changes every few seconds; it now produces none.
+- **The script ignores its own writes.** Typing in Remark Options or Settings
+  no longer makes the script re-scan the page after every keystroke (about 20
+  scheduled re-scans per 20 characters before, none now).
+- **Remark Options header stays pinned.** The mode badge, Settings and close
+  buttons keep their corner position at every window width (the badge label
+  shortens, then the title, before anything wraps), and extra window height
+  goes to the edit box instead of the chip palette.
+- **Label-pick badges no longer redraw every frame** (about 61 renders per
+  second while a label menu was open; now only when the menu changes).
+- **`Q` twice on the same selection no longer duplicates the quote.**
+- **A chip after a quote joins with `", "`** (the `": "` is gone).
+- **QC Compare's panel is pulled back on-screen** on load and when the browser
+  window is resized, as Remark Options already was in `v1.5.4`.
+- **`W` / `A` / `S` / `D` work as arrow keys** everywhere the arrows already
+  do (Scoring Shortcuts, Remark Options targets, QC Compare). Typing those
+  letters in a text box still types.
+- **Opt-in coverage report:** `npm run coverage` (98.1% of lines, up from
+  88.9%) with a ratchet file; `npm test` is unchanged.
+- Internal: shared `Utils` helpers (`observeSettled`, `rowSig`,
+  `modulesBySuffix`, `remarkTextarea`, `pickCascaderItem`), `CFG.keyQuote`
+  for the `Q` key, and a `CFG` object in `src/qc-compare.js`. See
+  `PLANNING/reports/v1.5.5/ledger.md`.
+- Tests: 257 Playwright tests in 14 files (58 more than `v1.5.4`'s 199),
+  including a new `tests/perf.spec.js` (`@perf`) that pins the idle-loop,
+  own-write and label-badge fixes. Whether any of this holds on live NOVA is
+  listed under "Known unverified".
 
 ### `v1.5.4` — Remark Options window no longer opens cut off or off-screen
 

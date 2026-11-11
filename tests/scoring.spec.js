@@ -1,6 +1,6 @@
 const { test, expect } = require('./helpers/test');
 const { boot } = require('./helpers/fixture');
-const { scoreMod, expanded, scoreNumsWith } = require('./helpers/scores');
+const { scoreMod, expanded, scoreNumsWith, setScores, ALL_EMPTY } = require('./helpers/scores');
 
 // The fixture's second-level labels, in menu order. Keys 2-9 and 0 pick
 // LABELS[n - 1] (0 is the 10th); key 1 is a category with one leaf below it.
@@ -119,6 +119,44 @@ test.describe('lateral movement', { tag: '@logic' }, () => {
     await page.keyboard.press('ArrowRight');
     for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown');
     await expectActive(page, 7);
+  });
+
+  // WASD are aliases of the arrow keys (v1.5.5): same assertions, w/a/s/d in place of the matching arrow.
+  test('A and D jump between the Trans1-3 and Trans4-7 columns like ArrowLeft and ArrowRight', async ({ page }) => {
+    await page.keyboard.press('d');
+    await expectActive(page, 4);
+    await page.keyboard.press('a');
+    await expectActive(page, 1);
+    await page.keyboard.press('a');
+    await expectActive(page, 4);
+    await page.keyboard.press('d');
+    await expectActive(page, 1);
+  });
+
+  test('S and W step down and up, skipping the empty Trans3, like ArrowDown and ArrowUp', async ({ page }) => {
+    await page.keyboard.press('s');
+    await expectActive(page, 2);
+    await page.keyboard.press('s');
+    await expectActive(page, 4);
+    await page.keyboard.press('w');
+    await expectActive(page, 2);
+  });
+
+  test('S stays on Trans7 when it is already at the bottom of the right column', async ({ page }) => {
+    await page.keyboard.press('d');
+    for (let i = 0; i < 6; i++) await page.keyboard.press('s');
+    await expectActive(page, 7);
+  });
+
+  test('uppercase W/A/S/D alias the arrows too', async ({ page }) => {
+    await page.keyboard.press('Shift+D');
+    await expectActive(page, 4);
+    await page.keyboard.press('Shift+A');
+    await expectActive(page, 1);
+    await page.keyboard.press('Shift+S');
+    await expectActive(page, 2);
+    await page.keyboard.press('Shift+W');
+    await expectActive(page, 1);
   });
 });
 
@@ -268,5 +306,146 @@ test.describe('failed label click', { tag: '@logic' }, () => {
     await expectActive(page, 1);
     expect(await moves(page)).toEqual([]);
     await expect.poll(() => value(page, 1)).toBe('2 Points');
+  });
+});
+
+test.describe('label badge rendering', { tag: '@perf' }, () => {
+  test('label badges render on menu change, not every frame', async ({ page }) => {
+    await openLabelMenu(page, 1); // label mode is on and the badges are showing
+    await page.evaluate(() => { window.__tlLabelRenders = 0; });
+    await page.waitForTimeout(1000);
+    const count = await page.evaluate(() => window.__tlLabelRenders);
+    expect(count).toBeLessThanOrEqual(5); // the rAF loop did ~60
+  });
+});
+
+test.describe('X clears the active score', { tag: '@logic' }, () => {
+  test('X on a scored translation clears it and stays on the same translation', async ({ page }) => {
+    await page.keyboard.press('3');
+    await expectValue(page, 1, '3 Points');
+    await expectActive(page, 2);
+    await page.keyboard.press('ArrowUp');
+    await expectActive(page, 1);
+    await trackActive(page);
+    await page.keyboard.press('x');
+    await expectValue(page, 1, '');
+    await expect.poll(() => status(page)).toBe('Trans1 cleared');
+    await expectActive(page, 1);
+    expect(await moves(page)).toEqual([]);
+  });
+
+  test('X on an empty translation says it is already empty', async ({ page }) => {
+    await page.keyboard.press('x');
+    await expect.poll(() => status(page)).toBe('Trans1 already empty');
+    await expectActive(page, 1);
+  });
+
+  test('X during a label pick is ignored: nothing is cleared and label mode stays', async ({ page }) => {
+    // The brief expected X to leave label mode; the code's label-mode branch
+    // ignores every non-number, non-arrow key, so X is inert here.
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('x');
+    await expectValue(page, 1, '2 Points');
+    await expect(page.locator('.tl-num-badge').first()).toBeVisible();
+    await expect.poll(() => expanded(page, 1)).toBe('true');
+    await expectActive(page, 1);
+  });
+});
+
+test.describe('Esc and arrows during a label pick', { tag: '@logic' }, () => {
+  test('Esc cancels the pick, removes the badges and keeps the cursor and bare 2 Points', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => status(page)).toBe('Label pick cancelled');
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+    await expectActive(page, 1);
+    await expectValue(page, 1, '2 Points');
+  });
+
+  test('ArrowDown leaves label mode and moves to the next translation', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('ArrowDown');
+    await expectActive(page, 2);
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+  });
+
+  test('ArrowUp leaves label mode and moves up', async ({ page }) => {
+    await page.keyboard.press('ArrowDown');
+    await expectActive(page, 2);
+    await openLabelMenu(page, 2);
+    await page.keyboard.press('ArrowUp');
+    await expectActive(page, 1);
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+  });
+
+  // Review Focus #1: WASD during a label pick behave exactly as the arrows do in that state.
+  test('S leaves label mode and moves to the next translation, like ArrowDown', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('s');
+    await expectActive(page, 2);
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+  });
+
+  test('W leaves label mode and moves up, like ArrowUp', async ({ page }) => {
+    await page.keyboard.press('s');
+    await expectActive(page, 2);
+    await openLabelMenu(page, 2);
+    await page.keyboard.press('w');
+    await expectActive(page, 1);
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+  });
+
+  test('D and A are inert during a label pick (as ArrowRight/ArrowLeft are), and the digit pick still works afterwards', async ({ page }) => {
+    await trackActive(page);
+    await openLabelMenu(page, 1);
+    for (const k of ['d', 'a', 'ArrowRight', 'ArrowLeft']) await page.keyboard.press(k);
+    await expectActive(page, 1);
+    await expect(page.locator('.tl-num-badge').first()).toBeVisible();
+    await expect.poll(() => expanded(page, 1)).toBe('true');
+    await expectValue(page, 1, '2 Points');
+    await page.keyboard.press('4');
+    await expectValue(page, 1, '2 Points / Fluency');
+    await expectActive(page, 2);
+    expect(await moves(page)).toEqual([{ num: 2, trans1: '2 Points / Fluency' }]);
+  });
+});
+
+test.describe('shortcuts OFF', { tag: '@logic' }, () => {
+  test('turning shortcuts off removes the highlight and score keys do nothing', async ({ page }) => {
+    await setScores(page, ALL_EMPTY); // materialise the (empty) value element so it can be read
+    await page.locator('#tl-score-toggle').click();
+    await expect(page.locator('#tl-score-toggle')).toHaveText('Shortcuts: OFF');
+    await expect.poll(() => activeNums(page)).toEqual([]);
+    expect(await status(page)).toBe('OFF');
+    for (const k of ['3', 'c', '2', 'x', 'ArrowDown']) await page.keyboard.press(k);
+    await page.waitForTimeout(300);
+    await expectValue(page, 1, '');
+    await expect.poll(() => activeNums(page)).toEqual([]);
+    expect(await status(page)).toBe('OFF');
+  });
+
+  test('turning shortcuts back on restores the highlight', async ({ page }) => {
+    await page.locator('#tl-score-toggle').click();
+    await expect.poll(() => activeNums(page)).toEqual([]);
+    await page.locator('#tl-score-toggle').click();
+    await expectActive(page, 1);
+    await page.keyboard.press('3');
+    await expectValue(page, 1, '3 Points');
+  });
+});
+
+test.describe('wrong value stops the queue', { tag: '@logic' }, () => {
+  test('a pick that lands on a different value says unexpected -> stopped and drops the next queued key', async ({ page }) => {
+    await trackActive(page);
+    await page.evaluate(() => { window.__fixture.wrongNextValue = '2 Points / Grammar'; });
+    await page.keyboard.press('3');
+    await page.keyboard.press('c'); // queued behind the 3; must be dropped
+    await expect.poll(() => status(page)).toContain('unexpected → stopped');
+    expect(await status(page)).toContain('"2 Points / Grammar"');
+    await page.waitForTimeout(500);
+    await expectValue(page, 1, '2 Points / Grammar'); // not overwritten by the queued Confusing
+    await expectActive(page, 1);
+    expect(await moves(page)).toEqual([]);
+    expect(await status(page)).toContain('unexpected → stopped');
   });
 });

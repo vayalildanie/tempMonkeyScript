@@ -47,7 +47,8 @@
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
     let labelMode = false;    // true while a "2 Points" label pick is in progress
     let labelBusy = false;    // guards against double-firing while a label click is mid-flight
-    let labelBadgeRAF = null; // handle for the loop that keeps the label menu's number badges in sync
+    let labelBadgeRAF = null; // handle for the one-shot retry render after label mode starts
+    let labelBadgeObserver = null; // MutationObserver that keeps the label menu's number badges in sync
 
     // The active-translation cursor. Shared with QC Compare (see
     // trans-cursor.js), which is why this module no longer tracks an index
@@ -164,11 +165,7 @@
     // A fingerprint for "which row am I on" — the source text is always
     // present and different per row, so a change in it means the page has
     // navigated to a new row and per-row state (the cursor, etc.) should reset.
-    function getRowSig() {
-      const src = document.querySelector('[data-module-key="NoteTrans"]')
-        || document.querySelector('[data-module-name="Trans1"]');
-      return src ? src.textContent.trim().slice(0, 80) : '';
-    }
+    const getRowSig = Utils.rowSig;
 
     // ====================================================================
     // Highlighting the active translation
@@ -243,6 +240,8 @@
     // sit much farther away than this, so the threshold reliably tells
     // "this control's own dropdown" apart from "some other translation's
     // dropdown that happened to reappear."
+    // (QC Compare uses 120: the two values were tuned independently (v1.0.0 / v1.3.0), never reconciled, and neither is
+    // verified against live NOVA — don't change one to match the other blind.)
     const ADJACENT_GAP_PX = 100;
 
     // Find the target menu item, but only inside a popup adjacent to
@@ -442,6 +441,7 @@
     // the first — the first column is the score column itself, which never
     // gets a badge) of every currently-visible popup.
     function renderLabelBadges() {
+      if (window.__tlLabelRenders !== undefined) window.__tlLabelRenders++; // test-only counter; production never creates it
       for (const popup of popupsVisible()) {
         const cols = popup.querySelectorAll('ul.ant-cascader-menu');
         cols.forEach((ul, colIdx) => {
@@ -465,15 +465,29 @@
       }
     }
     function clearLabelBadges() {
+      // Every label-mode exit path (exitLabelMode, commitLabelAndAdvance) lands here.
+      if (labelBadgeObserver) { labelBadgeObserver.disconnect(); labelBadgeObserver = null; }
+      if (labelBadgeRAF) { cancelAnimationFrame(labelBadgeRAF); labelBadgeRAF = null; }
       document.querySelectorAll('.tl-num-badge').forEach((b) => b.remove());
     }
     function startLabelBadges() {
-      if (labelBadgeRAF) return;
-      (function loop() {
-        if (!labelMode) { labelBadgeRAF = null; clearLabelBadges(); return; }
+      if (labelBadgeObserver) return;
+      renderLabelBadges();
+      // Observe the popup's parent (the portal container): it survives the page
+      // re-creating the popup element or its columns, unlike the popup itself.
+      const popup = openLabelPopup();
+      const root = (popup && popup.parentElement) || document.body;
+      labelBadgeObserver = new MutationObserver(() => {
+        if (!labelMode) { clearLabelBadges(); return; }
         renderLabelBadges();
-        labelBadgeRAF = requestAnimationFrame(loop);
-      })();
+        labelBadgeObserver.takeRecords(); // drop our own badge inserts so they don't re-trigger a render
+      });
+      labelBadgeObserver.observe(root, { childList: true, subtree: true });
+      // One frame-late retry covers a column that appears right after the first render.
+      labelBadgeRAF = requestAnimationFrame(() => {
+        labelBadgeRAF = null;
+        if (labelMode) renderLabelBadges();
+      });
     }
     function exitLabelMode() {
       labelMode = false;
@@ -520,61 +534,35 @@
 
     // Pick item N from the current rightmost (deepest) menu column. An item
     // with an expand arrow is a category (drill in further); one without is
-    // a leaf label (commit it, close the menu, advance).
+    // a leaf label (commit it, close the menu, advance). The pick/click/drill
+    // mechanics are Utils.pickCascaderItem, shared with QC Compare.
     async function pickLabelByNumber(n) {
       if (labelBusy) return;
       labelBusy = true;
       try {
         const popup = openLabelPopup();
         if (!popup) { exitLabelMode(); return; }
-        const cols = popup.querySelectorAll('ul.ant-cascader-menu');
-        if (cols.length < 2) { setStatus('Labels not open yet'); return; }
-        const col = cols[cols.length - 1]; // rightmost = deepest column currently shown
-        const li = col.querySelectorAll('li.ant-cascader-menu-item')[n - 1];
-        if (!li) { setStatus(`No item #${n} here`); return; }
-
-        // The decisive signal: an expand-arrow class means "category, can drill deeper";
-        // its absence means "this is a leaf label."
-        const isLeaf = !li.classList.contains('ant-cascader-menu-item-expand');
         // Captured before the click, so the commit below reads back and
         // advances relative to the translation this label was picked *for*.
+        // (Pure reads, so taking them before the helper's not-open/not-found
+        // checks rather than after changes nothing.)
         const nums = cursor.list();
         const num = cursor.get();
         const mod = scoreModuleFor(num);
-        const colsBefore = cols.length;
-
         const before = mod ? readSelected(mod).trim() : '';
+        let beforeLeaf = before;
 
-        Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
-
-        if (isLeaf) {
-          // The platform doesn't auto-close the menu for a leaf pick, so we commit and advance ourselves.
-          await commitLabelAndAdvance(mod, num, nums, before);
-          return;
-        }
-
-        // Category: drill in, wait for the next column to appear.
-        await Utils.waitFor(() => {
-          const p = openLabelPopup();
-          return !!p && p.querySelectorAll('ul.ant-cascader-menu').length > colsBefore;
-        }, 800).catch(() => {});
-
-        // If drilling in reveals exactly one leaf sub-label, auto-pick it too
-        // (the leaf still needs to be explicitly selected — e.g. to land on
-        // "Grammar/Grammar" — so this isn't skippable), then commit + advance.
-        const p2 = openLabelPopup();
-        const newCols = p2 ? p2.querySelectorAll('ul.ant-cascader-menu') : [];
-        const deepest = newCols[newCols.length - 1];
-        const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
-        if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
-          // The category click may already have changed the displayed value, so
-          // read it again right before the leaf click.
-          const beforeLeaf = mod ? readSelected(mod).trim() : '';
-          Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
-          await commitLabelAndAdvance(mod, num, nums, beforeLeaf);
-        } else {
-          setStatus('Category selected — press a number for the sub-label');
-        }
+        const { outcome } = await Utils.pickCascaderItem(popup, n, {
+          findPopup: openLabelPopup,
+          // The category click may already have changed the displayed value,
+          // so re-read it right before the auto-picked leaf is clicked.
+          beforeLeafClick: () => { beforeLeaf = mod ? readSelected(mod).trim() : ''; },
+        });
+        if (outcome === 'not-open') { setStatus('Labels not open yet'); return; }
+        if (outcome === 'not-found') { setStatus(`No item #${n} here`); return; }
+        if (outcome === 'drilled-category') { setStatus('Category selected — press a number for the sub-label'); return; }
+        // The platform doesn't auto-close the menu for a leaf pick, so we commit and advance ourselves.
+        await commitLabelAndAdvance(mod, num, nums, outcome === 'drilled-leaf' ? beforeLeaf : before);
       } finally {
         labelBusy = false;
       }
@@ -629,12 +617,17 @@
 
       if (!enabled) return;
 
+      // WASD act as the arrow keys. Resolved only here, after the modifier, Escape and typing
+      // guards above, so W/A/S/D typed in a text box still type. Letter shortcuts keep reading e.key.
+      const ARROW_ALIAS = { w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight' };
+      const key = ARROW_ALIAS[e.key.toLowerCase()] || e.key;
+
       // Label-pick mode: number keys choose the Nth item in the rightmost column;
       // arrows exit label mode and move to another translation; anything else is ignored.
       if (labelMode) {
         if (/^[0-9]$/.test(e.key)) { e.preventDefault(); pickLabelByNumber(e.key === '0' ? 10 : parseInt(e.key, 10)); return; }
-        if (e.key === 'ArrowDown') { e.preventDefault(); exitLabelMode(); move(1); return; }
-        if (e.key === 'ArrowUp') { e.preventDefault(); exitLabelMode(); move(-1); return; }
+        if (key === 'ArrowDown') { e.preventDefault(); exitLabelMode(); move(1); return; }
+        if (key === 'ArrowUp') { e.preventDefault(); exitLabelMode(); move(-1); return; }
         return;
       }
 
@@ -652,13 +645,13 @@
       } else if (k === CFG.keyScore2) {
         e.preventDefault();
         enqueueScore(CFG.pathKey2, '2 Points', CFG.advanceOn2);
-      } else if (e.key === 'ArrowDown') {
+      } else if (key === 'ArrowDown') {
         e.preventDefault();
         move(1);
-      } else if (e.key === 'ArrowUp') {
+      } else if (key === 'ArrowUp') {
         e.preventDefault();
         move(-1);
-      } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      } else if (key === 'ArrowRight' || key === 'ArrowLeft') {
         e.preventDefault();
         jumpColumn();
       }
@@ -846,30 +839,26 @@
     // Watching the page for changes (SPA row changes / re-renders)
     // ====================================================================
 
-    let settleTimer = null;
     // Note: the empty-row "auto-advance Enter" behavior that used to live
     // here (pressing Enter for the user when a row has nothing to score, in
     // Submit Check mode) moved to Remark Composer along with the rest of
     // the check system — see its onMutate(), which now owns checkModeIdx.
     function onMutate() {
-      clearTimeout(settleTimer);
-      settleTimer = setTimeout(() => {
-        if (!document.getElementById('tl-score-panel')) injectPanel(); // re-inject if the platform wiped it
-        injectStyle();
-        const sig = getRowSig();
-        if (sig && sig !== lastRowSig) { // row changed → reset the active-translation cursor
-          lastRowSig = sig;
-          // Silent: the `if (enabled) applyHighlight()` below does the paint.
-          // Column memory deliberately survives a row change (see TransCursor).
-          cursor.reset({ silent: true });
-          if (labelMode) exitLabelMode(); // a row change cancels any in-progress label pick
-          const nums = getScoreModules().map(transNumberOf);
-          log(`Scoreable Trans on this row: ${nums.join(', ')} (empty ones auto-skipped)`);
-          updateSkippedLine();
-          if (enabled) setStatus(`New row · Trans${nums[0] || 1}`);
-        }
-        if (enabled) applyHighlight();
-      }, 200);
+      if (!document.getElementById('tl-score-panel')) injectPanel(); // re-inject if the platform wiped it
+      injectStyle();
+      const sig = getRowSig();
+      if (sig && sig !== lastRowSig) { // row changed → reset the active-translation cursor
+        lastRowSig = sig;
+        // Silent: the `if (enabled) applyHighlight()` below does the paint.
+        // Column memory deliberately survives a row change (see TransCursor).
+        cursor.reset({ silent: true });
+        if (labelMode) exitLabelMode(); // a row change cancels any in-progress label pick
+        const nums = getScoreModules().map(transNumberOf);
+        log(`Scoreable Trans on this row: ${nums.join(', ')} (empty ones auto-skipped)`);
+        updateSkippedLine();
+        if (enabled) setStatus(`New row · Trans${nums[0] || 1}`);
+      }
+      if (enabled) applyHighlight();
     }
 
     // ====================================================================
@@ -887,8 +876,7 @@
       log(`Scoreable Trans on this row: ${getScoreModules().map(transNumberOf).join(', ')} (empty ones auto-skipped)`);
       applyHighlight();
       document.addEventListener('keydown', onKeyDown, true); // capture phase, to get the key before the platform does
-      const mo = new MutationObserver(onMutate);
-      mo.observe(document.body, { childList: true, subtree: true });
+      Utils.observeSettled(onMutate, Utils.SETTLE_MS.score, { name: 'score' });
       window.addEventListener('resize', () => { const p = document.getElementById('tl-score-panel'); if (p) clampIntoView(p); });
       log(`Started ${VERSION}`);
     }

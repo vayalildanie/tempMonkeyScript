@@ -105,6 +105,37 @@
       return item ? item.textContent.trim() : '';
     },
 
+    // ---- Shared page-reading helpers (Scoring Shortcuts, QC Compare, Remark Composer) ----
+    // Each was previously copied into two or three modules.
+
+    // A fingerprint for "which row am I on": the Note module's text (the
+    // page's own source text, different per row), else Trans1's, first 80
+    // chars trimmed. A change means the page navigated to a new row.
+    rowSig() {
+      const src = document.querySelector('[data-module-key="NoteTrans"]')
+        || document.querySelector('[data-module-name="Trans1"]');
+      return src ? src.textContent.trim().slice(0, 80) : '';
+    },
+
+    // Every module whose name is "Trans<N><suffix>", keyed by Trans number.
+    // The platform nests duplicate `[data-module-name]` wrappers for one
+    // module and re-renders can replace nodes, so this is read live and the
+    // first (outermost) match wins per number.
+    modulesBySuffix(suffix) {
+      const map = new Map();
+      document.querySelectorAll('[data-module-name]').forEach((mod) => {
+        const n = Utils.transNumFromModuleName(mod, suffix);
+        if (n !== null && !map.has(n)) map.set(n, mod);
+      });
+      return map;
+    },
+
+    // Trans n's Remarks textarea, or null (also null for a missing n).
+    remarkTextarea(n) {
+      const mod = Utils.modulesBySuffix(' Remarks').get(n);
+      return (mod && mod.querySelector('textarea')) || null;
+    },
+
     // ---- Shared cascader-popup helpers (Scoring Shortcuts + QC Compare) ----
     // Both modules drive the platform's Ant Design cascader controls and hit
     // the same "which popup actually belongs to the control I just clicked"
@@ -144,6 +175,56 @@
       if (opens.length) {
         await Utils.waitFor(() => document.querySelectorAll('input[aria-expanded="true"]').length === 0, 700).catch(() => {});
       }
+    },
+
+    // Pick item #index (1-based) from the deepest column currently shown in
+    // an open cascader popup — the number-key label pick both Scoring
+    // Shortcuts and QC Compare do. Only the pick/click/drill mechanics live
+    // here; finding the popup, the busy guard, status text and what happens
+    // after a commit stay in each module.
+    //
+    // The decisive signal: `ant-cascader-menu-item-expand` present means a
+    // category (drill deeper), absent means a leaf label. A category with
+    // exactly one leaf child gets that leaf picked too — it still has to be
+    // selected explicitly (e.g. to land on "Grammar/Grammar").
+    //
+    // opts.findPopup re-finds the popup after the category click (each
+    // module has its own lookup; defaults to the popup passed in).
+    // opts.beforeLeafClick runs right before the auto-picked leaf is
+    // clicked, so Scoring Shortcuts can re-read the displayed value the
+    // category click may have changed.
+    //
+    // Returns { outcome }: 'not-open' (fewer than 2 columns), 'not-found'
+    // (no item at that index), 'leaf', 'drilled-leaf' or 'drilled-category'.
+    async pickCascaderItem(popup, index, opts = {}) {
+      const findPopup = opts.findPopup || (() => popup);
+      const cols = popup.querySelectorAll('ul.ant-cascader-menu');
+      if (cols.length < 2) return { outcome: 'not-open' };
+      const col = cols[cols.length - 1]; // deepest column currently shown
+      const li = col.querySelectorAll('li.ant-cascader-menu-item')[index - 1];
+      if (!li) return { outcome: 'not-found' };
+
+      const isLeaf = !li.classList.contains('ant-cascader-menu-item-expand');
+      const colsBefore = cols.length;
+      Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
+      if (isLeaf) return { outcome: 'leaf' };
+
+      // Category: drill in and wait for the next column to render.
+      await Utils.waitFor(() => {
+        const p = findPopup();
+        return !!p && p.querySelectorAll('ul.ant-cascader-menu').length > colsBefore;
+      }, 800).catch(() => {});
+
+      const p2 = findPopup();
+      const newCols = p2 ? p2.querySelectorAll('ul.ant-cascader-menu') : [];
+      const deepest = newCols[newCols.length - 1];
+      const subItems = deepest ? deepest.querySelectorAll('li.ant-cascader-menu-item') : [];
+      if (subItems.length === 1 && !subItems[0].classList.contains('ant-cascader-menu-item-expand')) {
+        if (opts.beforeLeafClick) opts.beforeLeafClick();
+        Utils.clickEl(subItems[0].querySelector('.ant-cascader-menu-item-content') || subItems[0]);
+        return { outcome: 'drilled-leaf' };
+      }
+      return { outcome: 'drilled-category' };
     },
 
     // ---- JSON-safe localStorage read/write ----
@@ -427,6 +508,76 @@
       const patched = (text) => original(Utils.stripAnnotationTags(text));
       patched.__tlPatched = true;
       clipboard.writeText = patched;
+    },
+
+    // ---- Shared settle observer (v1.5.5 T3 — P-SELF, C-SHARED part 1) ----
+    // Every module (Scoring Shortcuts, QC Compare, Remark Composer) watches
+    // document.body for SPA row-changes/re-renders via its own debounced
+    // MutationObserver, so the platform settling (or our own panel/popover
+    // re-render) can be reacted to once, after a short quiet period rather
+    // than on every single mutation record. Previously each module also
+    // reacted to mutations it caused ITSELF — typing into the composer, for
+    // instance, repaints its own highlight backdrop — which kept
+    // rescheduling that module's settle timer indefinitely while the user
+    // typed. This selector names every root/piece of UI any module injects
+    // into the page, so records caused only by our own writes can be
+    // filtered out before deciding whether to (re)start the settle timer.
+    OWN_UI_SELECTOR: '#rmd-popover, #rmd-settings-overlay, #rmd-check-pill, #tl-score-panel, #tl-score-pill, .qc-badge, #qc-panel, .tl-toast',
+
+    // Settle delay per module (unchanged from each module's own prior
+    // hardcoded value — centralized here only so there's one place that
+    // defines "how long is quiet enough").
+    SETTLE_MS: { score: 200, remark: 250, qc: 220 },
+
+    // One MutationObserver, watching document.body, that calls `fn` after
+    // mutations have been quiet for `delayMs` — but only counting mutations
+    // that aren't just the script re-painting its own UI (see
+    // OWN_UI_SELECTOR above). A record is "our own" when its target (or, for
+    // a characterData record, the target text node's parentElement) sits
+    // inside OWN_UI_SELECTOR — EXCEPT a record whose removedNodes includes
+    // one of our own root elements: the platform wiping out
+    // #rmd-popover/#tl-score-panel/#qc-panel wholesale must still restart
+    // the timer, so onMutate's "re-inject if the platform wiped it" check
+    // actually gets to run.
+    //
+    // opts.characterData — observe characterData mutations too (only Remark
+    //   Composer needs this, for its live backdrop/preview text).
+    // opts.name — when set, and window.__tlSettleScheduled exists
+    //   (test-only instrumentation), increments window.__tlSettleScheduled[name]
+    //   every time the timer actually (re)starts.
+    // opts.shouldSkip() — optional, generic, caller-supplied predicate checked
+    //   on every batch before scheduling/rescheduling the settle timer. When
+    //   it returns true, the batch is dropped entirely (no timer start, no
+    //   reschedule, no test counter bump) — the same effect a module's own
+    //   early-bail raw mutation callback had before this observer was
+    //   shared. Kept as a plain predicate rather than named module state (no
+    //   `scraping`/`adopting` here) so this helper stays module-agnostic;
+    //   each caller supplies its own notion of "busy right now" (e.g. QC
+    //   Compare's `() => scraping || adopting`).
+    //
+    // Returns the MutationObserver (already observing) — one instance per
+    // caller; this does not share a single observer across modules.
+    observeSettled(fn, delayMs, opts = {}) {
+      const { characterData = false, name, shouldSkip } = opts;
+      let timer = null;
+      function ownRootRemoved(record) {
+        return Array.from(record.removedNodes).some((n) => n.nodeType === 1 && n.matches && n.matches(Utils.OWN_UI_SELECTOR));
+      }
+      function isOwnWrite(record) {
+        const el = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        return !!(el && el.closest && el.closest(Utils.OWN_UI_SELECTOR));
+      }
+      function onBatch(records) {
+        if (shouldSkip && shouldSkip()) return; // caller says it's busy — don't touch the timer at all
+        const kept = records.filter((r) => !isOwnWrite(r) || ownRootRemoved(r));
+        if (!kept.length) return; // nothing but our own writes in this batch — don't reschedule
+        clearTimeout(timer);
+        if (name && window.__tlSettleScheduled) window.__tlSettleScheduled[name]++; // test-only counter
+        timer = setTimeout(fn, delayMs);
+      }
+      const mo = new MutationObserver(onBatch);
+      mo.observe(document.body, { childList: true, subtree: true, characterData });
+      return mo;
     },
   };
 

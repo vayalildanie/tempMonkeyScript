@@ -181,6 +181,63 @@ test.describe('quoting', { tag: '@logic' }, () => {
     });
   }
 
+  test('Q twice on the same selection writes the quote once', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    const q = (await makeSelection(page, 'part')).trim();
+    await page.keyboard.press('q');
+    await expectRemarks(page, { 1: `"${q}"` });
+    await blur(page);
+    await makeSelection(page, 'part');
+    await page.keyboard.press('q');
+    await expect(page.locator('#rmd-hint')).toContainText('Already quoted.');
+    await expectRemarks(page, { 1: `"${q}"`, 2: '', 4: '', 5: '' });
+    await expect(edit(page)).toHaveValue(`"${q}"`);
+    expect(await page.evaluate(() => window.getSelection().toString())).toBe('');
+  });
+
+  test('Q on a different but overlapping selection still writes a new quote', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await expectTarget(page, 1);
+    const pick = async (end) => {
+      await page.evaluate((end) => {
+        const el = document.querySelector('[data-module-name="Trans5"] .preview-content');
+        el.textContent = 'cats and dogs';
+        const r = document.createRange();
+        r.setStart(el.firstChild, 0);
+        r.setEnd(el.firstChild, end);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }, end);
+      await page.keyboard.press('q');
+      await blur(page);
+    };
+    await pick(3); // "cat"
+    await pick(4); // "cats": its first three letters are the previous quote, but it is a different quote
+    await expect(edit(page)).toHaveValue('"cat"  "cats"');
+    await pick(3); // "cat" again: the remark now ends with "cats", so this is new too
+    await expect(edit(page)).toHaveValue('"cat"  "cats"  "cat"');
+  });
+
+  test('a selection containing a literal quote mark is appended as-is', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await expectTarget(page, 1);
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-module-name="Trans5"] .preview-content');
+      el.textContent = 'He said "hi" there';
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    });
+    await page.keyboard.press('q');
+    await expectRemarks(page, { 1: '"He said "hi" there"', 2: '', 4: '', 5: '' });
+  });
+
   test.describe('separators', () => {
     const chipText = (page) => page.locator('#rmd-popover .rmd-chip').first().getAttribute('data-chip');
 
@@ -188,14 +245,21 @@ test.describe('quoting', { tag: '@logic' }, () => {
       await setScores(page, ALL_EMPTY);
     });
 
-    test('a chip is joined with ": " when it follows a quote', async ({ page }) => {
+    test('a chip is joined with ", " when it follows a quote', async ({ page }) => {
       await openComposer(page);
       const q = (await makeSelection(page, 'part')).trim();
       await page.keyboard.press('q');
       await blur(page);
       const chip = await chipText(page);
       await page.locator('#rmd-popover .rmd-chip').first().click();
-      await expect(edit(page)).toHaveValue(`"${q}": ${chip}`);
+      await expect(edit(page)).toHaveValue(`"${q}", ${chip}`);
+
+      // The same outcome for a pre-v1.5.3 Trans N "x" quote already in the remark.
+      await page.locator('#rmd-clear-btn').click();
+      await setRemark(page, 1, 'Trans 2 "x"');
+      await expect(edit(page)).toHaveValue('Trans 2 "x"');
+      await page.locator('#rmd-popover .rmd-chip').first().click();
+      await expect(edit(page)).toHaveValue(`Trans 2 "x", ${chip}`);
     });
 
     test('a quote is joined with two spaces when it follows a chip', async ({ page }) => {
@@ -216,15 +280,6 @@ test.describe('quoting', { tag: '@logic' }, () => {
       const b = (await makeSelection(page, 'note-body')).trim();
       await page.keyboard.press('q');
       await expect(edit(page)).toHaveValue(`"${a}"  "${b}"`);
-    });
-
-    test('a chip is joined with ": " when it follows a pre-v1.5.3 Trans N "x" quote', async ({ page }) => {
-      await setRemark(page, 1, 'Trans 2 "x"');
-      await openComposer(page);
-      await expectTarget(page, 1);
-      const chip = await chipText(page);
-      await page.locator('#rmd-popover .rmd-chip').first().click();
-      await expect(edit(page)).toHaveValue(`Trans 2 "x": ${chip}`);
     });
   });
 });
