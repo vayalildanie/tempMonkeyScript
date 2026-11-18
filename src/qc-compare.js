@@ -473,7 +473,7 @@
       labelBusy = true;
       try {
         const popup = labelPopupFor(n);
-        if (!popup) { setCursorStatus('No label menu open — press 2 first'); return; }
+        if (!popup) { setCursorStatus('No label menu open — press 2 or C first'); return; }
         const { outcome } = await Utils.pickCascaderItem(popup, i, { findPopup: () => labelPopupFor(n) });
         if (outcome === 'not-open') setCursorStatus('Labels not open yet');
         else if (outcome === 'not-found') setCursorStatus(`No item #${i} here`);

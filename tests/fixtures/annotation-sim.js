@@ -18,11 +18,19 @@
     'Register',
     'Other',
   ];
-  var CONFUSING_LEAVES = [
-    'English meaning unclear',
-    'Necessary context missing',
-    'Task input issue',
-    'Other / open feedback',
+  // NOVA's real Confusing tree (screenshots, 2026-11-17): [label, children or null for a leaf].
+  var CONFUSING_TREE = [
+    ['English meaning unclear', [
+      'Meme or cultural reference unclear',
+      'Key word, phrase, or symbol unclear',
+      'Sentence meaning or logical relation unclear',
+    ]],
+    ['Necessary context missing', [
+      'Essential referent unresolved',
+      'Essential linked context missing',
+    ]],
+    ['Task input issue', null],
+    ['Other / open feedback', null],
   ];
 
   window.__fixture = {
@@ -132,17 +140,14 @@
 
   function confusingCategoryColumn() {
     var prefix = 'Confusing' + SPLIT;
-    return column(CONFUSING_LEAVES.map(function (label, index) {
-      // Mirrors categoryColumn(): only the first item ("English meaning
-      // unclear") drills further, so tests can tell a category click from
-      // a terminal leaf. The rest (indices 1-3) are leaves straight off
-      // Confusing, matching the real tree's mixed depth.
-      return menuItem(label, prefix + label, index === 0);
+    return column(CONFUSING_TREE.map(function (entry) {
+      return menuItem(entry[0], prefix + entry[0], !!entry[1]);
     }));
   }
-  function confusingLeafColumn() {
-    var key = 'Confusing' + SPLIT + 'English meaning unclear' + SPLIT + 'Meme or cultural reference unclear';
-    return column([menuItem('Meme or cultural reference unclear', key, false)]);
+  function confusingLeafColumn(category) {
+    var prefix = 'Confusing' + SPLIT + category + SPLIT;
+    var entry = CONFUSING_TREE.filter(function (e) { return e[0] === category; })[0];
+    return column(entry[1].map(function (label) { return menuItem(label, prefix + label, false); }));
   }
 
   function displayFromKey(pathKey, previous) {
@@ -193,13 +198,11 @@
     root.classList.remove('ant-select-open');
   }
 
-  function showNextColumn(drop, builder) {
+  // Like Ant's cascader: keep every column up to the clicked one, drop deeper ones, append the new one.
+  function showNextColumn(drop, builder, fromColumn) {
     var menus = drop.querySelector('.ant-cascader-menus');
-    var cols = menus.querySelectorAll('ul.ant-cascader-menu');
-    while (cols.length > 1) {
-      cols[cols.length - 1].remove();
-      cols = menus.querySelectorAll('ul.ant-cascader-menu');
-    }
+    var cols = Array.prototype.slice.call(menus.querySelectorAll('ul.ant-cascader-menu'));
+    cols.slice(cols.indexOf(fromColumn) + 1).forEach(function (ul) { ul.remove(); });
     menus.appendChild(builder());
   }
 
@@ -213,18 +216,19 @@
     var previous = current ? current.textContent.trim() : '';
 
     if (li.classList.contains('ant-cascader-menu-item-expand')) {
+      var col = li.closest('ul.ant-cascader-menu');
       if (key === '2 Points') {
         // Re-opening the label flow resets a deeper value back to bare
         // "2 Points" so a failed leaf click cannot look like a completed label.
         setDisplayed(root, '2 Points');
-        showNextColumn(drop, categoryColumn);
+        showNextColumn(drop, categoryColumn, col);
       } else if (key === 'Confusing') {
         setDisplayed(root, 'Confusing');
-        showNextColumn(drop, confusingCategoryColumn);
+        showNextColumn(drop, confusingCategoryColumn, col);
       } else if (key.indexOf('Confusing' + SPLIT) === 0) {
-        showNextColumn(drop, confusingLeafColumn);
+        showNextColumn(drop, function () { return confusingLeafColumn(key.split(SPLIT)[1]); }, col);
       } else {
-        showNextColumn(drop, leafColumn);
+        showNextColumn(drop, leafColumn, col);
       }
       ensureClear(root);
       return;

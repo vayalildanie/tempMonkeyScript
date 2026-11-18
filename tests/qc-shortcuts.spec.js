@@ -148,29 +148,30 @@ test.describe('label menu', { tag: '@logic' }, () => {
     await expectSelected(page, 1);
   });
 
-  for (const row of [
-    { key: '2', label: 'Necessary context missing' },
-    { key: '3', label: 'Task input issue' },
-    { key: '4', label: 'Other / open feedback' },
+  // Every leaf of NOVA's real Confusing tree, by the keys after C (C-2-1 = C, 2, 1).
+  for (const path of [
+    { keys: ['1', '1'], value: 'Confusing / English meaning unclear / Meme or cultural reference unclear' },
+    { keys: ['1', '2'], value: 'Confusing / English meaning unclear / Key word, phrase, or symbol unclear' },
+    { keys: ['1', '3'], value: 'Confusing / English meaning unclear / Sentence meaning or logical relation unclear' },
+    { keys: ['2', '1'], value: 'Confusing / Necessary context missing / Essential referent unresolved' },
+    { keys: ['2', '2'], value: 'Confusing / Necessary context missing / Essential linked context missing' },
+    { keys: ['3'], value: 'Confusing / Task input issue' },
+    { keys: ['4'], value: 'Confusing / Other / open feedback' },
   ]) {
-    test(`picks Confusing label "${row.label}" when ${row.key} is pressed with the Confusing menu open`, async ({ page }) => {
+    test(`${['C', ...path.keys].join('-')} relabels to "${path.value}" and shows ✓ only after the last key`, async ({ page }) => {
       await openConfusingLabelMenu(page, 1);
-      await page.keyboard.press(row.key);
-      await expectScore(page, 1, `Confusing / ${row.label}`);
+      for (const key of path.keys.slice(0, -1)) {
+        await page.keyboard.press(key);
+        await expect.poll(() => cursorStatus(page)).toBe('Category selected — press a number for the sub-label');
+        await expect.poll(() => expanded(page, 1)).toBe('true');
+      }
+      await page.keyboard.press(path.keys[path.keys.length - 1]);
+      await expectScore(page, 1, path.value);
       await expect.poll(() => expanded(page, 1)).toBe('false');
-      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = Confusing / ${row.label} ✓`);
+      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = ${path.value} ✓`);
       await expectSelected(page, 1);
     });
   }
-
-  test('selects the lone sub-label too when the Confusing category is picked with 1', async ({ page }) => {
-    await openConfusingLabelMenu(page, 1);
-    await page.keyboard.press('1');
-    await expectScore(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
-    await expect.poll(() => expanded(page, 1)).toBe('false');
-    await expect.poll(() => cursorStatus(page)).toBe('Trans1 = Confusing / English meaning unclear / Meme or cultural reference unclear ✓');
-    await expectSelected(page, 1);
-  });
 
   test('closes the menu and keeps bare Confusing when Escape is pressed with the Confusing menu open', async ({ page }) => {
     await openConfusingLabelMenu(page, 1);

@@ -67,7 +67,12 @@ production click is not lost when the focused input sits outside
 visible label stays separate from that key. Re-expanding `2 Points` resets a
 deeper displayed value back to bare `2 Points`; `Confusing` nests the same
 way — it is also expandable, and re-expanding it resets a deeper displayed
-value back to bare `Confusing`. `.ant-select-clear` is 16×16
+value back to bare `Confusing`. Unlike `2 Points`' schematic labels,
+`Confusing`'s tree (`CONFUSING_TREE`) copies NOVA's real labels and shape:
+two categories with 3 and 2 leaves, then two leaves straight off
+`Confusing`. Clicking a category keeps every column up to it and appends the
+next, as Ant's cascader does, so the column count grows on each drill.
+`.ant-select-clear` is 16×16
 so a center click can hit it. `window.__fixture.submitCount` increments only
 when the platform-like handler (below) accepts a Space `keydown`, or when
 `#fx-submit` is clicked. `window.__fixture.spaceEvents` records every Space

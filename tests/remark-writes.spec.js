@@ -380,7 +380,13 @@ test.describe('likely-remark summary', { tag: '@logic' }, () => {
   });
 
   test('a Confusing leaf other than "Other / open feedback" is not listed, even though it is a complete label', async ({ page }) => {
-    await setScores(page, { ...ALL_EMPTY, 4: 'Confusing / Task input issue', 6: 'Confusing / Other / open feedback' });
+    await setScores(page, {
+      ...ALL_EMPTY,
+      1: 'Confusing / Necessary context missing / Essential referent unresolved',
+      2: 'Confusing / English meaning unclear / Sentence meaning or logical relation unclear',
+      4: 'Confusing / Task input issue',
+      6: 'Confusing / Other / open feedback',
+    });
     await openComposer(page);
     await expect(page.locator('#rmd-likely')).toHaveText('Likely need remarks: Trans6 (Confusing)');
   });

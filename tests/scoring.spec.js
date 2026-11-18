@@ -17,14 +17,18 @@ const LABELS = [
   'Other',
 ];
 
-// Confusing's sub-labels in menu order. Key 1 is a category with one leaf
-// below it; keys 2-4 are leaves straight off Confusing.
-const CONFUSING_LABELS = [
-  'English meaning unclear',
-  'Necessary context missing',
-  'Task input issue',
-  'Other / open feedback',
+// Every leaf of NOVA's real Confusing tree, by the keys after C (C-2-1 = C, 2, 1).
+// Categories 1 and 2 have several children, so they wait for a second digit.
+const CONFUSING_PATHS = [
+  { keys: ['1', '1'], value: 'Confusing / English meaning unclear / Meme or cultural reference unclear' },
+  { keys: ['1', '2'], value: 'Confusing / English meaning unclear / Key word, phrase, or symbol unclear' },
+  { keys: ['1', '3'], value: 'Confusing / English meaning unclear / Sentence meaning or logical relation unclear' },
+  { keys: ['2', '1'], value: 'Confusing / Necessary context missing / Essential referent unresolved' },
+  { keys: ['2', '2'], value: 'Confusing / Necessary context missing / Essential linked context missing' },
+  { keys: ['3'], value: 'Confusing / Task input issue' },
+  { keys: ['4'], value: 'Confusing / Other / open feedback' },
 ];
+const pathName = (keys) => ['C', ...keys].join('-');
 
 // Trans numbers whose "TransN Score" block currently carries tl-active-score.
 const activeNums = (page) => scoreNumsWith(page, 'tl-active-score');
@@ -285,54 +289,37 @@ test.describe('C and Confusing label picks', { tag: '@logic' }, () => {
     expect(await moves(page)).toEqual([]);
   });
 
-  for (const key of ['2', '3', '4']) {
-    const label = CONFUSING_LABELS[Number(key) - 1];
-    test(`${key} commits "Confusing / ${label}" and advances to Trans2 when the Confusing menu is open`, async ({ page }) => {
+  for (const path of CONFUSING_PATHS) {
+    test(`${pathName(path.keys)} commits "${path.value}" and advances only after the last key`, async ({ page }) => {
+      await trackActive(page);
       await openConfusingLabelMenu(page, 1);
-      await page.keyboard.press(key);
-      await expectValue(page, 1, `Confusing / ${label}`);
+      for (const key of path.keys.slice(0, -1)) {
+        await page.keyboard.press(key);
+        await expect.poll(() => status(page)).toContain('Category selected');
+        await expectActive(page, 1);
+        await expect.poll(() => expanded(page, 1)).toBe('true');
+      }
+      expect(await moves(page)).toEqual([]);
+
+      await page.keyboard.press(path.keys[path.keys.length - 1]);
+      await expectValue(page, 1, path.value);
       await expectActive(page, 2);
+      expect(await moves(page)).toEqual([{ num: 2, trans1: path.value }]);
       await expect.poll(() => expanded(page, 1)).toBe('false');
       await expect(page.locator('.tl-num-badge')).toHaveCount(0);
     });
   }
 
-  test('1 drills into the Confusing category and advances once its lone leaf is committed', async ({ page }) => {
-    await trackActive(page);
-    await openConfusingLabelMenu(page, 1);
-    await page.keyboard.press('1');
-    await expectValue(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
-    await expectActive(page, 2);
-    expect(await moves(page)).toEqual([{ num: 2, trans1: 'Confusing / English meaning unclear / Meme or cultural reference unclear' }]);
-  });
-
-  test('a Confusing category waits for the next pick instead of advancing when it has several children', async ({ page }) => {
-    // Same forced-sibling trick as the 2 Points version above — generic by
-    // path depth (3 segments), so it applies to Confusing's category leaf too.
-    await page.evaluate(() => {
-      new MutationObserver(() => {
-        document.querySelectorAll('ul.ant-cascader-menu').forEach((ul) => {
-          const items = ul.querySelectorAll('li.ant-cascader-menu-item');
-          const key = items[0] && items[0].getAttribute('data-path-key');
-          if (items.length === 1 && key && key.split('__RC_CASCADER_SPLIT__').length === 3) {
-            const extra = items[0].cloneNode(true);
-            extra.setAttribute('data-path-key', key + '-extra');
-            ul.appendChild(extra);
-          }
-        });
-      }).observe(document.body, { childList: true, subtree: true });
-    });
-    await trackActive(page);
-    await openConfusingLabelMenu(page, 1);
-    await page.keyboard.press('1');
-    await expect.poll(() => status(page)).toContain('Category selected');
-    await expectActive(page, 1);
-    expect(await moves(page)).toEqual([]);
-
-    await page.keyboard.press('1');
-    await expectValue(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
-    await expectActive(page, 2);
-    expect(await moves(page)).toEqual([{ num: 2, trans1: 'Confusing / English meaning unclear / Meme or cultural reference unclear' }]);
+  test('a translation can be relabelled from one Confusing combination to another (C-2-1, then C-4, then C-1-3)', async ({ page }) => {
+    for (const path of [CONFUSING_PATHS[3], CONFUSING_PATHS[6], CONFUSING_PATHS[2]]) {
+      await page.keyboard.press('ArrowUp');
+      await expectActive(page, 1);
+      await openConfusingLabelMenu(page, 1);
+      await expectValue(page, 1, 'Confusing');
+      for (const key of path.keys) await page.keyboard.press(key);
+      await expectValue(page, 1, path.value);
+      await expectActive(page, 2);
+    }
   });
 
   test('a Confusing leaf pick advances past the empty Trans3 when made on Trans2', async ({ page }) => {

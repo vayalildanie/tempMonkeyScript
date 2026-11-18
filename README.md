@@ -107,7 +107,7 @@ simulator (its file name must start with `quality_` so the module starts).
 The specs are grouped by purpose (`scoring`, `submit-check`,
 `remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
 `qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
-`capture-contract` — 14 files, 277 tests as of `v1.5.6`) and tagged `@logic`
+`capture-contract` — 14 files, 283 tests as of `v1.5.6`) and tagged `@logic`
 (behavior), `@contract` (selector and fixture contracts), `@layout` (viewport
 and legend) or `@perf` (mutation and render counts). `npx playwright test
 --grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/
@@ -400,11 +400,11 @@ real annotation row (`PLANNING/reports/v1.5.5/live-checklist.md` has the
 step-by-step). Items marked `v1.5.6` are new in this release; the rest were
 listed under earlier versions and are still unchecked on live NOVA:
 
-- **`v1.5.6` Confusing sub-labels.** The fixture's Confusing tree has the
-  real shape (two- and three-level leaves) but schematic labels. That live
-  NOVA displays the remark-needing leaf as exactly
+- **`v1.5.6` Confusing sub-labels.** The fixture's Confusing tree copies the
+  labels and shape from screenshots, and every path (C-1-1 … C-4) is tested
+  on both pages. That live NOVA displays the remark-needing leaf as exactly
   `Confusing / Other / open feedback` (the hint matches that string exactly)
-  was taken from screenshots, not checked against the live DOM.
+  was not checked against the live DOM.
 - **`v1.5.6` Enter on QC Compare.** That the platform's submit hotkey on the
   QC page is the same native Space the annotation page uses.
 
@@ -474,7 +474,8 @@ listed under earlier versions and are still unchecked on live NOVA:
 - **Enter submits on QC Compare** through the same check-then-native-Space
   gate as Submit Check (`Utils.runSubmitGate`). Enter is left alone while
   typing or while a label menu is open.
-- Tests: 277 Playwright tests in 14 files (20 more than `v1.5.5`'s 257).
+- Tests: 283 Playwright tests in 14 files (26 more than `v1.5.5`'s 257),
+  including every Confusing path (C-1-1 … C-4) on both pages.
 
 ### `v1.5.5` — QC idle loop fixed, Remark Options header pinned, W/A/S/D, comma join
 
