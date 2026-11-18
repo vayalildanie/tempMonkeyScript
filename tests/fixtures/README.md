@@ -65,7 +65,9 @@ production click is not lost when the focused input sits outside
 `__RC_CASCADER_SPLIT__` paths (for example
 `2 Points__RC_CASCADER_SPLIT__Grammar__RC_CASCADER_SPLIT__Grammar`); the
 visible label stays separate from that key. Re-expanding `2 Points` resets a
-deeper displayed value back to bare `2 Points`. `.ant-select-clear` is 16×16
+deeper displayed value back to bare `2 Points`; `Confusing` nests the same
+way — it is also expandable, and re-expanding it resets a deeper displayed
+value back to bare `Confusing`. `.ant-select-clear` is 16×16
 so a center click can hit it. `window.__fixture.submitCount` increments only
 when the platform-like handler (below) accepts a Space `keydown`, or when
 `#fx-submit` is clicked. `window.__fixture.spaceEvents` records every Space

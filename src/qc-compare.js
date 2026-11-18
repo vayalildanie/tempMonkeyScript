@@ -46,7 +46,9 @@
     const CFG = {
       keyHelp: 'o',                    // show/hide the panel help text
       keyFlip: 'z',                    // flip the cursor's translation between Annotator 1's and 2's unit
-      keyErase: 'x',                   // clear the cursor's score
+      keyErase: 'x',                   // clear the cursor's score, then advance (see advanceOnErase)
+      advanceOnErase: true,            // set false to stay on the cleared translation
+      keySubmit: 'Enter',              // submit the row (native Space), after submitBlocker() passes
       keyScore3: '3',
       keyScore2: '2',
       keyConfusing: 'c',
@@ -359,9 +361,10 @@
       return true;
     }
 
-    // Score the cursor's translation. "2 Points" is a category, not a leaf,
-    // so after writing it we reopen the dropdown and leave it open for the
-    // 0-9 label pick — mirroring Module 1's `advanceOn2: false`.
+    // Score the cursor's translation. "2 Points" and "Confusing" are
+    // categories, not leaves, so after writing either one we reopen the
+    // dropdown and leave it open for the 0-9 label pick — mirroring
+    // Module 1's `advanceOn2: false`.
     async function relabel(n, pathKey) {
       if (!canWrite(n)) return;
       adopting = true;
@@ -370,9 +373,9 @@
         await writeCascade(n, pathKey);
         snapA[n] = pathKey;
         pairsTouched = true;
-        if (pathKey === CFG.pathKey2) {
-          await reopenForLabelPick(n);
-          setCursorStatus(`Trans${n} = 2 Points — press 1-9/0 for a label`);
+        if (pathKey === CFG.pathKey2 || pathKey === CFG.pathKeyConfusing) {
+          await reopenForLabelPick(n, pathKey);
+          setCursorStatus(`Trans${n} = ${pathKey} — press 1-9/0 for a label`);
         } else {
           setCursorStatus(`Trans${n} = ${pathKey} ✓`);
         }
@@ -386,18 +389,26 @@
       }
     }
 
-    // Clear the cursor's translation.
+    // What blocks an Enter submit on this row, as a toast message — '' when nothing does.
+    // No QC checks yet: Enter always submits. Add them here (return a message to block).
+    function submitBlocker() {
+      return '';
+    }
+
+    // Clear the cursor's translation. Returns true when it cleared (the X handler advances only then).
     async function eraseScore(n) {
-      if (!canWrite(n)) return;
+      if (!canWrite(n)) return false;
       adopting = true;
       try {
         await clearCascade(n);
         snapA[n] = '';
         pairsTouched = true;
         setCursorStatus(`Trans${n} cleared`);
+        return true;
       } catch (e) {
         console.error(`${TAG} Erase failed:`, e);
         setCursorStatus(`⚠️ Trans${n}: could not clear (see console)`);
+        return false;
       } finally {
         adopting = false;
         render();
@@ -405,17 +416,17 @@
     }
 
     // writeCascade deliberately closes and blurs the control when it's done.
-    // For "2 Points" we want it open, so reopen it as a separate step rather
-    // than threading a "leave it open" flag through writeCascade's
-    // verify-and-close path.
+    // For the category just written (2 Points or Confusing) we want it open,
+    // so reopen it as a separate step rather than threading a "leave it
+    // open" flag through writeCascade's verify-and-close path.
     //
-    // Reopening has to leave the menu *drilled into* "2 Points", not just
+    // Reopening has to leave the menu *drilled into* that category, not just
     // showing the top level: pickLabelByNumber reads the deepest column, and
     // with only the top level open the digit keys would land on
     // 3 Points/Confusing/2 Points instead of the sub-labels. Ant usually
     // restores the selected path's columns on reopen, but not dependably
     // enough to lean on — so drill in explicitly if it didn't.
-    async function reopenForLabelPick(n) {
+    async function reopenForLabelPick(n, pathKey) {
       const mod = scoreModule(n);
       const selector = mod && mod.querySelector('.ant-select-selector');
       const input = mod && mod.querySelector('input');
@@ -429,9 +440,9 @@
       };
       if (columns() >= 2) return; // already drilled in
       // pickNextOnPath does the adjacency-gated, canonPath-matched lookup —
-      // same engine writeCascade walks with, so "2 Points" is found the same
-      // way here as there.
-      const li = pickNextOnPath(selector, CFG.pathKey2, 0);
+      // same engine writeCascade walks with, so the category is found the
+      // same way here as there.
+      const li = pickNextOnPath(selector, pathKey, 0);
       if (!li) return;
       Utils.clickEl(li.querySelector('.ant-cascader-menu-item-content') || li);
       await Utils.waitFor(() => columns() >= 2, 800).catch(() => {});
@@ -930,6 +941,15 @@
       }
       if (Utils.inTextEntry()) return; // typing in a Remarks box — the keys are for typing
 
+      // Enter submits (via the platform's native Space), through the same gate as
+      // Remark Composer's Submit Check. Left alone while a label menu is open, so
+      // Enter still works inside the menu.
+      if (e.key === CFG.keySubmit) {
+        if (n != null && labelPopupFor(n)) return;
+        Utils.runSubmitGate(e, { check: submitBlocker });
+        return;
+      }
+
       // WASD act as the arrow keys. Resolved only after the modifier, Escape and typing guards
       // above, so W/A/S/D typed in a text box still type. Letter shortcuts below keep reading e.key.
       const ARROW_ALIAS = { w: 'ArrowUp', a: 'ArrowLeft', s: 'ArrowDown', d: 'ArrowRight' };
@@ -974,7 +994,12 @@
         Promise.resolve(flip(n)).then((ok) => { if (ok && cursor.get() === n) advanceFocus(); });
         return;
       }
-      if (k === CFG.keyErase) { e.preventDefault(); eraseScore(n); return; }
+      if (k === CFG.keyErase) {
+        e.preventDefault();
+        // Like Module 1's X (advanceOnErase): a successful clear moves on to the next translation, the same way Z does.
+        Promise.resolve(eraseScore(n)).then((ok) => { if (ok && CFG.advanceOnErase && cursor.get() === n) advanceFocus(); });
+        return;
+      }
       if (PATH_KEY[k]) { e.preventDefault(); relabel(n, PATH_KEY[k]); return; }
     }
 

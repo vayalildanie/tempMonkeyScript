@@ -24,12 +24,18 @@ async function openLabelMenu(page, n) {
   await expect.poll(() => expanded(page, n)).toBe('true');
 }
 
+async function openConfusingLabelMenu(page, n) {
+  await page.keyboard.press('c');
+  await expect.poll(() => cursorStatus(page)).toContain('press 1-9/0');
+  await expectScore(page, n, 'Confusing');
+  await expect.poll(() => expanded(page, n)).toBe('true');
+}
+
 test.describe('score keys', { tag: '@logic' }, () => {
   test.beforeEach(async ({ page }) => { await bootQC(page); });
 
   for (const row of [
     { key: '3', score: '3 Points' },
-    { key: 'c', score: 'Confusing' },
   ]) {
     test(`sets ${row.score} on the selected translation when ${row.key} is pressed`, async ({ page }) => {
       await page.keyboard.press(row.key);
@@ -42,13 +48,12 @@ test.describe('score keys', { tag: '@logic' }, () => {
     });
   }
 
-  test('clears the selected translation\'s score when X is pressed', async ({ page }) => {
+  test('X clears the selected translation\'s score and advances to the next', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
     await expectSelected(page, 2);
     await page.keyboard.press('x');
     await expectScore(page, 2, '');
-    await expect.poll(() => cursorStatus(page)).toBe('Trans2 cleared');
-    await expectSelected(page, 2);
+    await expectSelected(page, 4); // Trans3 is empty in this fixture, so the advance skips it (as Z's does)
     await expectScore(page, 1, '');
     await expectScore(page, 4, '3 Points');
   });
@@ -137,6 +142,44 @@ test.describe('label menu', { tag: '@logic' }, () => {
     await expectScore(page, 1, '2 Points');
     await expectSelected(page, 1);
   });
+
+  test('opens the Confusing label menu without relabeling or moving the selection when c is pressed', async ({ page }) => {
+    await openConfusingLabelMenu(page, 1);
+    await expectSelected(page, 1);
+  });
+
+  for (const row of [
+    { key: '2', label: 'Necessary context missing' },
+    { key: '3', label: 'Task input issue' },
+    { key: '4', label: 'Other / open feedback' },
+  ]) {
+    test(`picks Confusing label "${row.label}" when ${row.key} is pressed with the Confusing menu open`, async ({ page }) => {
+      await openConfusingLabelMenu(page, 1);
+      await page.keyboard.press(row.key);
+      await expectScore(page, 1, `Confusing / ${row.label}`);
+      await expect.poll(() => expanded(page, 1)).toBe('false');
+      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = Confusing / ${row.label} ✓`);
+      await expectSelected(page, 1);
+    });
+  }
+
+  test('selects the lone sub-label too when the Confusing category is picked with 1', async ({ page }) => {
+    await openConfusingLabelMenu(page, 1);
+    await page.keyboard.press('1');
+    await expectScore(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
+    await expect.poll(() => expanded(page, 1)).toBe('false');
+    await expect.poll(() => cursorStatus(page)).toBe('Trans1 = Confusing / English meaning unclear / Meme or cultural reference unclear ✓');
+    await expectSelected(page, 1);
+  });
+
+  test('closes the menu and keeps bare Confusing when Escape is pressed with the Confusing menu open', async ({ page }) => {
+    await openConfusingLabelMenu(page, 1);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => expanded(page, 1)).toBe('false');
+    await expect.poll(() => cursorStatus(page)).toBe('Trans1: label pick cancelled');
+    await expectScore(page, 1, 'Confusing');
+    await expectSelected(page, 1);
+  });
 });
 
 test.describe('help toggle', { tag: '@logic' }, () => {
@@ -191,5 +234,57 @@ test.describe('guards', { tag: '@logic' }, () => {
     expect(await cursorStatus(page)).toBe('');
     expect(await helpShown()).toBe(helpBefore);
     await expect(page.locator('.qc-badge.qc-adopted')).toHaveCount(0);
+  });
+});
+
+test.describe('Enter submits', { tag: '@logic' }, () => {
+  // Records every Space keydown/keyup that reaches the document (what the platform's submit hotkey listens for).
+  const recordSpaces = (page) => page.evaluate(() => {
+    window.__spaces = [];
+    for (const type of ['keydown', 'keyup']) {
+      document.addEventListener(type, (ev) => { if (ev.code === 'Space') window.__spaces.push(type); });
+    }
+  });
+  const spaces = (page) => page.evaluate(() => window.__spaces);
+
+  test.beforeEach(async ({ page }) => { await bootQC(page); await recordSpaces(page); });
+
+  test('Enter is replaced by one native Space keydown+keyup', async ({ page }) => {
+    const prevented = await page.evaluate(() => {
+      const ev = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    });
+    expect(prevented).toBe(true);
+    expect(await spaces(page)).toEqual(['keydown', 'keyup']);
+  });
+
+  test('Enter does not submit while a label menu is open, or while typing a remark', async ({ page }) => {
+    await openLabelMenu(page, 1);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
+    await page.locator(`${remarkMod(2)} textarea`).focus();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    expect(await spaces(page)).toEqual([]);
+  });
+
+  test('Enter does not submit while the Confusing label menu is open', async ({ page }) => {
+    await openConfusingLabelMenu(page, 1);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    expect(await spaces(page)).toEqual([]);
+    await expectScore(page, 1, 'Confusing');
+  });
+
+  test('a blocking check message stops the submit and shows the toast', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      const ok = window.TL.Utils.runSubmitGate(ev, { check: () => '⛔ blocked for test' });
+      return { ok, prevented: ev.defaultPrevented };
+    });
+    expect(result).toEqual({ ok: false, prevented: true });
+    expect(await spaces(page)).toEqual([]);
+    await expect(page.locator('#tl-toast')).toContainText('blocked for test');
   });
 });

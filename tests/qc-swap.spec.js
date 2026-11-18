@@ -15,7 +15,7 @@ const DATA = {
     1: { score: '3 Points', remark: '' },
     2: { score: '2 Points / Fluency', remark: 'shared' },
     4: { score: '3 Points', remark: '' },
-    5: { score: 'Confusing', remark: 'a1 five' },
+    5: { score: 'Confusing / Task input issue', remark: 'a1 five' },
     6: { score: '3 Points', remark: '' },
     7: { score: '2 Points / Fluency', remark: '' },
   },
@@ -84,11 +84,21 @@ test.describe('failsafe: the preserved pair survives clears and edits', { tag: '
   // Annotator 1's Trans2 is ('2 Points / Fluency', 'shared'); Annotator 2's is ('3 Points', 'shared').
   const clears = [
     ['the remark is cleared', async (page) => { await setRemark(page, 2, ''); }],
-    ['the score is cleared with X', async (page) => { await page.keyboard.press('x'); await expect.poll(async () => (await unit(page, 2)).score).toBe(''); }],
+    // X advances after clearing, so step back up to Trans2 before the Z presses.
+    ['the score is cleared with X', async (page) => {
+      await page.keyboard.press('x');
+      await expect.poll(async () => (await unit(page, 2)).score).toBe('');
+      await expectSelected(page, 4);
+      await page.keyboard.press('ArrowUp');
+      await expectSelected(page, 2);
+    }],
     ['both are cleared', async (page) => {
       await setRemark(page, 2, '');
       await page.keyboard.press('x');
       await expect.poll(async () => (await unit(page, 2)).score).toBe('');
+      await expectSelected(page, 4);
+      await page.keyboard.press('ArrowUp');
+      await expectSelected(page, 2);
     }],
   ];
   for (const [label, clear] of clears) {

@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.5`, on `release/v1.5.5` (not yet merged to `main`).** It is covered by an automated
+> **Current version: `v1.5.6`, on `main`.** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -48,7 +48,7 @@ page:
    clicking pre-written category chips instead of typing full sentences by
    hand. As of `v1.5.0` every translation has its own Remarks box on the page,
    so the composer writes into whichever translation's box is highlighted, and
-   shows which translations (scored 2 Points or Confusing) probably need one.
+   shows which translations (scored 2 Points, or Confusing scored `Other / open feedback`) probably need one.
 3. **QC Compare** — for the separate quality-check pass: shows both
    annotators' scores/text side by side (the platform only shows one at a
    time) and lets a reviewer swap to the other annotator's value, or relabel
@@ -107,7 +107,7 @@ simulator (its file name must start with `quality_` so the module starts).
 The specs are grouped by purpose (`scoring`, `submit-check`,
 `remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
 `qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
-`capture-contract` — 14 files, 257 tests as of `v1.5.5`) and tagged `@logic`
+`capture-contract` — 14 files, 277 tests as of `v1.5.6`) and tagged `@logic`
 (behavior), `@contract` (selector and fixture contracts), `@layout` (viewport
 and legend) or `@perf` (mutation and render counts). `npx playwright test
 --grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/
@@ -162,14 +162,14 @@ entirely rather than carried along. See `src/scoring-shortcuts.js` and
 | Key | Effect |
 |---|---|
 | `3` | Score the active translation "3 Points", then auto-advance |
-| `C` | Score it "Confusing", then auto-advance |
+| `C` | Score it "Confusing", stay put — leaves the label menu open |
 | `2` | Score it "2 Points", stay put — leaves the label menu open |
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item (`0` = the 10th). The pick only advances once the displayed value has actually changed to a completed label; if the click didn't take, it stays put and says so |
-| `X` | Clear the active translation's score, stay put |
+| `X` | Clear the active translation's score, then auto-advance (stays put if it was already empty) |
 | `↑` / `↓` (or `W` / `S`) | Move the active translation |
 | `←` / `→` (or `A` / `D`) | Swap columns (Trans1–3 / Trans4–7) — either key toggles |
 | `P` | Show/hide the shortcuts panel — works even while shortcuts are OFF |
-| `Esc` | Cancel an in-progress label pick |
+| `Esc` (or `X`) | Cancel an in-progress label pick. `X` here only cancels; press it again to clear the score |
 
 **Module 2 — Remark Options** (score page; `src/remark-composer.js`,
 internal module name is still `RemarkComposer`. Module 1 yields the keyboard
@@ -204,8 +204,9 @@ added after existing text is joined with two spaces. `Q` pressed twice on the
 same selection writes the quote once.
 
 Under the edit box a "Likely need remarks" line lists translations scored
-`2 Points` (bare or fully labelled) or `Confusing`; `3 Points` and unscored
-ones are left out. It is informational only — it never changes the target or
+`2 Points` (bare or fully labelled) or Confusing's `Other / open feedback` leaf
+specifically; every other Confusing sub-label is self-explanatory and is left
+out, as are `3 Points` and unscored ones. It is informational only — it never changes the target or
 blocks a write. While the window is open, Scoring Shortcuts' own active-score
 highlight is hidden so only the Remarks target is outlined. These keys are
 listed in the Scoring Shortcuts legend (`Q`, `O`, `Z`, `Enter`, `Esc`).
@@ -222,9 +223,10 @@ window reset to a fixed size every time it was reopened.
 
 | Key | Effect |
 |---|---|
-| `3` / `2` / `C` | Relabel the active translation directly to 3 Points / (open) 2 Points / Confusing |
+| `3` / `2` / `C` | Relabel the active translation directly to 3 Points / (open) 2 Points / (open) Confusing |
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item |
-| `X` | Clear the active translation's score |
+| `X` | Clear the active translation's score, then move to the next translation (like `Z`; a refused clear stays put) |
+| `Enter` | Submit the row (sends the platform's own `Space` submit). Ignored while typing a remark or while a label menu is open. Goes through the same `Utils.runSubmitGate` as Module 2's Submit Check; QC has no checks yet (`submitBlocker()` in `qc-compare.js` is where they go) |
 | `Z` | Flip the active translation's Score **and** Remark between Annotator 1's and Annotator 2's original values (press again on it to flip back). Both originals are kept for the row, so if you clear or edit either side, `Z` restores from them instead of stopping. A hand-edited unit is noted in the badge before it is overwritten. Every `Z` that writes moves on to the next translation (to flip one back, step up and press `Z`); a refused `Z` stays put (Annotator 2's tab is showing, nothing differs, or Annotator 2 has no score) |
 | `↑` / `↓` (or `W` / `S`) | Move the active translation. Its Score and its Remarks box are outlined together; the Swap/Undo badge stays between them |
 | `←` / `→` (or `A` / `D`) | Swap columns (Trans1–3 / Trans4–7) |
@@ -390,13 +392,21 @@ around it:
   original; the header comment was simply stale. (Module 3 only gained real
   arrow-key navigation later, in `v1.3.2`.)
 
-## Known unverified (as of `v1.5.5`)
+## Known unverified (as of `v1.5.6`)
 
 Things the automated suite cannot prove, because the fixture is a *model* of
 the page and the captured HTML contains no event listeners. Check these on a
 real annotation row (`PLANNING/reports/v1.5.5/live-checklist.md` has the
-step-by-step). Items marked `v1.5.5` are new in this release; the rest were
+step-by-step). Items marked `v1.5.6` are new in this release; the rest were
 listed under earlier versions and are still unchecked on live NOVA:
+
+- **`v1.5.6` Confusing sub-labels.** The fixture's Confusing tree has the
+  real shape (two- and three-level leaves) but schematic labels. That live
+  NOVA displays the remark-needing leaf as exactly
+  `Confusing / Other / open feedback` (the hint matches that string exactly)
+  was taken from screenshots, not checked against the live DOM.
+- **`v1.5.6` Enter on QC Compare.** That the platform's submit hotkey on the
+  QC page is the same native Space the annotation page uses.
 
 - **`v1.5.5` Remark Options header.** The pinned header, its three buttons
   staying in the corner while resizing from widest to narrowest, and extra
@@ -448,6 +458,23 @@ listed under earlier versions and are still unchecked on live NOVA:
   outline looks against the live layout.
 
 ## Version history
+
+### `v1.5.6` — Confusing sub-labels, X clears, Enter on QC Compare
+
+- **`C` opens a Confusing label pick**, the same way `2` does for 2 Points,
+  on both the annotation page and QC Compare. NOVA's Confusing option now has
+  sub-labels at two depths; the translation only advances (or QC shows ✓)
+  once a true leaf is picked, never on a category.
+- **"Likely need remarks" flags only `Confusing / Other / open feedback`.**
+  Every other Confusing sub-label is self-explanatory and is left out.
+  Submit Check's remark gate is unchanged: any complete non-3-Points score
+  still needs a remark, and a bare `Confusing` blocks as an unfinished label.
+- **`X` clears the active score and advances**, like `3` (annotation page and
+  QC Compare). During a label pick, `X` cancels it like `Esc`.
+- **Enter submits on QC Compare** through the same check-then-native-Space
+  gate as Submit Check (`Utils.runSubmitGate`). Enter is left alone while
+  typing or while a label menu is open.
+- Tests: 277 Playwright tests in 14 files (20 more than `v1.5.5`'s 257).
 
 ### `v1.5.5` — QC idle loop fixed, Remark Options header pinned, W/A/S/D, comma join
 

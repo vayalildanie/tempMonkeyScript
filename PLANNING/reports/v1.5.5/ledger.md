@@ -120,5 +120,6 @@ Small leftovers that are not failure paths and are not covered either (not requi
 ## Open questions for the owner
 
 - **X during a label pick.** Pressing X while a label menu is open is currently ignored (only digits and the up/down keys act in label mode). The original plan's coverage table assumed X would cancel the pick. The tests assert today's behaviour and production was not changed. Decide whether X should cancel the pick; if so it is a one-line change plus flipping one test.
+  **Resolved (owner, 2026-11-12):** X now cancels the pick exactly like Esc ("Label pick cancelled"). It does not also clear the score; a second X does that.
 - **Title truncation and QC panel height** (see live checklist step 10): is "Remark Optio..." at the default 380px width acceptable, and is the QC panel's bottom being cut off on a short screen worth a later fix?
 - **D22** (`isLabelComplete` mid-level-category gap) remains out of scope and is still in the backlog.

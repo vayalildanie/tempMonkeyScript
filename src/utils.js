@@ -471,6 +471,29 @@
       target.dispatchEvent(new KeyboardEvent('keyup', opts));
     },
 
+    // ---- Submit gate: check first, then submit with the native Space ----
+    // Shared by Remark Composer's Enter check and QC Compare's Enter-to-submit.
+    // `check()` returns '' (or null) when nothing blocks the submit, or an
+    // HTML message saying what does. Blocked: the key is swallowed and the
+    // message shown as a toast. Clean: optional `passToast`, then — only when
+    // `submit` is true — the key's own effect is replaced by
+    // dispatchNativeSpace(). Returns true on a clean pass.
+    runSubmitGate(e, { check = () => '', submit = true, passToast = '' } = {}) {
+      const blocked = check();
+      if (blocked) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        Utils.showToast(blocked);
+        return false;
+      }
+      if (passToast) Utils.showToast(passToast, 1600, 'ok');
+      if (submit) {
+        e.preventDefault();
+        Utils.dispatchNativeSpace();
+      }
+      return true;
+    },
+
     // ---- Copy-tag stripping (v1.4.4) ----
     // The platform's own translation text carries machine-translation
     // segment tags (`<content1>`, `</content1>`, etc.) that are never meant

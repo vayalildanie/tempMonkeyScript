@@ -29,7 +29,7 @@
       keyScore3: '3',
       keyScore2: '2',
       keyConfusing: 'c', // case-insensitive
-      keyErase: 'x',         // clear the active translation's score; stays on the same translation
+      keyErase: 'x',         // clear the active translation's score, then advance (see advanceOnErase)
       keyToggleWindow: 'p', // show/hide the whole shortcuts panel
       pathKey3: '3 Points',            // the platform's data-path-key for the "3 Points" option
       pathKey2: '2 Points',
@@ -38,6 +38,8 @@
       highlightBorder: '#f0a500',             // active-translation highlight border (amber)
       highlightBg: 'rgba(255, 221, 87, .30)', // active-translation highlight fill (pale yellow)
       advanceOn2: false, // don't auto-advance after "2 Points" — a label still needs picking
+      advanceOnConfusing: false, // Confusing is a category now too — a sub-label still needs picking
+      advanceOnErase: true, // X advances like 3/C; set false to stay on the cleared translation
     };
 
     // ---------- Runtime state ----------
@@ -45,7 +47,7 @@
     let lastRowSig = '';      // fingerprint of the previous row's source text, to detect a row change
     let queue = [];           // pending score requests, strictly in the order keys were pressed
     let processing = false;   // true while the queue is being drained, so it's never processed concurrently
-    let labelMode = false;    // true while a "2 Points" label pick is in progress
+    let labelMode = false;    // true while a sub-label pick is in progress (after "2 Points" or "Confusing")
     let labelBusy = false;    // guards against double-firing while a label click is mid-flight
     let labelBadgeRAF = null; // handle for the one-shot retry render after label mode starts
     let labelBadgeObserver = null; // MutationObserver that keeps the label menu's number badges in sync
@@ -123,8 +125,8 @@
     // ====================================================================
 
     // Is this translation completely labelled? Two catches, both exact
-    // string comparisons: nothing selected at all, or a bare "2 Points" that
-    // never got specialized.
+    // string comparisons: nothing selected at all, or a bare "2 Points" or
+    // "Confusing" that never got specialized.
     //
     // Never split the value on "/" to count depth. Score and label are one
     // cascader whose displayed value joins levels with " / ", and some labels
@@ -153,7 +155,7 @@
     // Authenticity render as expandable.
     function isLabelComplete(mod) {
       const v = readSelected(mod).trim();
-      return v !== '' && v !== CFG.pathKey2;
+      return v !== '' && v !== CFG.pathKey2 && v !== CFG.pathKeyConfusing;
     }
 
     // Trans numbers that would block a submit. getScoreModules() already
@@ -287,9 +289,11 @@
       await Utils.waitFor(() => readSelected(mod).indexOf(pathKey) >= 0
         || (input && input.getAttribute('aria-expanded') !== 'true'), 1000).catch(() => {});
 
-      // After a leaf value (3 Points / Confusing): collapse and blur, so
-      // this control doesn't carry leftover focus into the next operation
-      // (the same root cause fixed above, avoided proactively here too).
+      // After a leaf value (e.g. 3 Points — the only case reaching here with
+      // leaveOpen false; "2 Points"/"Confusing" leave it open for a label
+      // pick instead): collapse and blur, so this control doesn't carry
+      // leftover focus into the next operation (the same root cause fixed
+      // above, avoided proactively here too).
       if (!leaveOpen) {
         if (input && input.getAttribute('aria-expanded') === 'true') {
           Utils.clickEl(selector);
@@ -385,18 +389,23 @@
           queue.length = 0;
           return;
         }
-        // Stays on the same translation — clearing is a "let me redo this
-        // one" action, not a reason to move on.
         if (labelMode) exitLabelMode();
-        applyHighlight();
-        setStatus(`Trans${num} cleared`);
+        if (CFG.advanceOnErase) {
+          // Same pre-await-snapshot advance as 3/C below.
+          const nextNum = TL.TransCursor.nextIn(nums, num);
+          cursor.set(nextNum, { scroll: true });
+          setStatus(num === nextNum ? `Trans${num} cleared (last)` : `Trans${num} cleared → Trans${nextNum}`);
+        } else {
+          applyHighlight();
+          setStatus(`Trans${num} cleared`);
+        }
         return;
       }
 
       setStatus(`Setting Trans${num} = ${req.label}…`);
 
       try {
-        await setScore(mod, req.pathKey, !req.advance); // "2 Points" leaves the dropdown open for a label pick; everything else collapses it
+        await setScore(mod, req.pathKey, !req.advance); // "2 Points" and "Confusing" leave the dropdown open for a label pick; everything else collapses it
       } catch (e) {
         console.error(`${TAG} [${name}] Failed to set score (设分失败):`, e);
         setStatus(`Trans${num} failed: ${e.message} (stopped)`);
@@ -423,7 +432,7 @@
         cursor.set(nextNum, { scroll: true });
         setStatus(num === nextNum ? `Trans${num} = ${got} ✓ (last)` : `Trans${num} = ${got} ✓ → Trans${nextNum}`);
       } else {
-        // "2 Points": leave the menu open, enter label-pick mode, show the number badges.
+        // "2 Points" / "Confusing": leave the menu open, enter label-pick mode, show the number badges.
         applyHighlight();
         labelMode = true;
         startLabelBadges();
@@ -508,14 +517,15 @@
     // of an index makes that mismatch impossible to express.
     //
     // `before` is the displayed value captured just before the leaf click.
-    // After a "2 Points" pick the control already shows a non-empty value, so
-    // "non-empty" proves nothing — only a value that differs from `before` and
-    // is not bare "2 Points" shows the platform accepted the leaf. If it
+    // After a "2 Points" or "Confusing" pick the control already shows a
+    // non-empty value, so "non-empty" proves nothing — only a value that
+    // differs from `before` and is not bare "2 Points" or bare "Confusing"
+    // shows the platform accepted the leaf. If it
     // didn't, nothing advances and label mode stays on so the pick can be retried.
     async function commitLabelAndAdvance(mod, num, nums, before) {
       const accepted = () => {
         const v = mod ? readSelected(mod).trim() : '';
-        return v !== '' && v !== before && v !== CFG.pathKey2;
+        return v !== '' && v !== before && v !== CFG.pathKey2 && v !== CFG.pathKeyConfusing;
       };
       await Utils.waitFor(accepted, 600).catch(() => {});
       const got = mod ? readSelected(mod) : '';
@@ -623,9 +633,11 @@
       const key = ARROW_ALIAS[e.key.toLowerCase()] || e.key;
 
       // Label-pick mode: number keys choose the Nth item in the rightmost column;
-      // arrows exit label mode and move to another translation; anything else is ignored.
+      // arrows exit label mode and move to another translation; the erase key cancels the
+      // pick like Esc (it does not also clear the score); anything else is ignored.
       if (labelMode) {
         if (/^[0-9]$/.test(e.key)) { e.preventDefault(); pickLabelByNumber(e.key === '0' ? 10 : parseInt(e.key, 10)); return; }
+        if (e.key.toLowerCase() === CFG.keyErase) { e.preventDefault(); exitLabelMode(); setStatus('Label pick cancelled'); return; }
         if (key === 'ArrowDown') { e.preventDefault(); exitLabelMode(); move(1); return; }
         if (key === 'ArrowUp') { e.preventDefault(); exitLabelMode(); move(-1); return; }
         return;
@@ -638,7 +650,7 @@
         enqueueScore(CFG.pathKey3, '3 Points', true);
       } else if (k === CFG.keyConfusing) {
         e.preventDefault();
-        enqueueScore(CFG.pathKeyConfusing, 'Confusing', true);
+        enqueueScore(CFG.pathKeyConfusing, 'Confusing', CFG.advanceOnConfusing);
       } else if (k === CFG.keyErase) {
         e.preventDefault();
         enqueueErase();

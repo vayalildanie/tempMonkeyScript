@@ -360,7 +360,7 @@ test.describe('escape', { tag: '@logic' }, () => {
 
 test.describe('likely-remark summary', { tag: '@logic' }, () => {
   test('the summary lists 2 Points and Confusing, not 3 Points or unscored, below the edit box when the composer opens', async ({ page }) => {
-    await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '2 Points / Grammar', 4: 'Confusing', 5: '2 Points' });
+    await setScores(page, { ...ALL_EMPTY, 1: '3 Points', 2: '2 Points / Grammar', 4: 'Confusing / Other / open feedback', 5: '2 Points' });
     await openComposer(page);
     const likely = page.locator('#rmd-likely');
     await expect(likely).toHaveText('Likely need remarks: Trans2 (2 Points), Trans4 (Confusing), Trans5 (2 Points)');
@@ -373,10 +373,16 @@ test.describe('likely-remark summary', { tag: '@logic' }, () => {
     await setScores(page, { ...ALL_EMPTY, 2: '2 Points' });
     await openComposer(page);
     await expect(page.locator('#rmd-likely')).toHaveText('Likely need remarks: Trans2 (2 Points)');
-    await setScores(page, { 2: '3 Points', 6: 'Confusing' });
+    await setScores(page, { 2: '3 Points', 6: 'Confusing / Other / open feedback' });
     await expect(page.locator('#rmd-likely')).toHaveText('Likely need remarks: Trans6 (Confusing)');
     await setScores(page, { 6: '3 Points' });
     await expect(page.locator('#rmd-likely')).toHaveText('No translations need remarks');
+  });
+
+  test('a Confusing leaf other than "Other / open feedback" is not listed, even though it is a complete label', async ({ page }) => {
+    await setScores(page, { ...ALL_EMPTY, 4: 'Confusing / Task input issue', 6: 'Confusing / Other / open feedback' });
+    await openComposer(page);
+    await expect(page.locator('#rmd-likely')).toHaveText('Likely need remarks: Trans6 (Confusing)');
   });
 
   test('the target ignores the summary and the hint line is empty when the composer opens', async ({ page }) => {

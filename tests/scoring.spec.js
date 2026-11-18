@@ -17,6 +17,15 @@ const LABELS = [
   'Other',
 ];
 
+// Confusing's sub-labels in menu order. Key 1 is a category with one leaf
+// below it; keys 2-4 are leaves straight off Confusing.
+const CONFUSING_LABELS = [
+  'English meaning unclear',
+  'Necessary context missing',
+  'Task input issue',
+  'Other / open feedback',
+];
+
 // Trans numbers whose "TransN Score" block currently carries tl-active-score.
 const activeNums = (page) => scoreNumsWith(page, 'tl-active-score');
 
@@ -60,6 +69,12 @@ const moves = (page) => page.evaluate(() => window.__moves);
 
 async function openLabelMenu(page, n) {
   await page.keyboard.press('2');
+  await expect(page.locator(`${scoreMod(n)} input`).first()).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator(`${scoreMod(n)} .tl-num-badge`).first()).toBeVisible();
+}
+
+async function openConfusingLabelMenu(page, n) {
+  await page.keyboard.press('c');
   await expect(page.locator(`${scoreMod(n)} input`).first()).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator(`${scoreMod(n)} .tl-num-badge`).first()).toBeVisible();
 }
@@ -160,21 +175,12 @@ test.describe('lateral movement', { tag: '@logic' }, () => {
   });
 });
 
-test.describe('3 and C advance', { tag: '@logic' }, () => {
+test.describe('3 advances', { tag: '@logic' }, () => {
   test('3 sets 3 Points, closes the cascader and advances when pressed on Trans1', async ({ page }) => {
     await page.keyboard.press('3');
     await expectValue(page, 1, '3 Points');
     await expectActive(page, 2);
     await expect.poll(() => expanded(page, 1)).toBe('false');
-  });
-
-  test('C sets Confusing and the advance skips the empty Trans3 when pressed on Trans2', async ({ page }) => {
-    await page.keyboard.press('ArrowDown');
-    await expectActive(page, 2);
-    await page.keyboard.press('c');
-    await expectValue(page, 2, 'Confusing');
-    await expectActive(page, 4);
-    await expect(page.locator(`${scoreMod(3)} .ant-select-selection-item`)).toHaveCount(0);
   });
 
   test('3 sets 3 Points and stays when pressed on the last translation', async ({ page }) => {
@@ -269,6 +275,76 @@ test.describe('2 and label picks', { tag: '@logic' }, () => {
   });
 });
 
+test.describe('C and Confusing label picks', { tag: '@logic' }, () => {
+  test('C sets bare Confusing and leaves the label menu open without advancing', async ({ page }) => {
+    await trackActive(page);
+    await openConfusingLabelMenu(page, 1);
+    await expectValue(page, 1, 'Confusing');
+    await expectActive(page, 1);
+    expect(await status(page)).toContain('press a number');
+    expect(await moves(page)).toEqual([]);
+  });
+
+  for (const key of ['2', '3', '4']) {
+    const label = CONFUSING_LABELS[Number(key) - 1];
+    test(`${key} commits "Confusing / ${label}" and advances to Trans2 when the Confusing menu is open`, async ({ page }) => {
+      await openConfusingLabelMenu(page, 1);
+      await page.keyboard.press(key);
+      await expectValue(page, 1, `Confusing / ${label}`);
+      await expectActive(page, 2);
+      await expect.poll(() => expanded(page, 1)).toBe('false');
+      await expect(page.locator('.tl-num-badge')).toHaveCount(0);
+    });
+  }
+
+  test('1 drills into the Confusing category and advances once its lone leaf is committed', async ({ page }) => {
+    await trackActive(page);
+    await openConfusingLabelMenu(page, 1);
+    await page.keyboard.press('1');
+    await expectValue(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
+    await expectActive(page, 2);
+    expect(await moves(page)).toEqual([{ num: 2, trans1: 'Confusing / English meaning unclear / Meme or cultural reference unclear' }]);
+  });
+
+  test('a Confusing category waits for the next pick instead of advancing when it has several children', async ({ page }) => {
+    // Same forced-sibling trick as the 2 Points version above — generic by
+    // path depth (3 segments), so it applies to Confusing's category leaf too.
+    await page.evaluate(() => {
+      new MutationObserver(() => {
+        document.querySelectorAll('ul.ant-cascader-menu').forEach((ul) => {
+          const items = ul.querySelectorAll('li.ant-cascader-menu-item');
+          const key = items[0] && items[0].getAttribute('data-path-key');
+          if (items.length === 1 && key && key.split('__RC_CASCADER_SPLIT__').length === 3) {
+            const extra = items[0].cloneNode(true);
+            extra.setAttribute('data-path-key', key + '-extra');
+            ul.appendChild(extra);
+          }
+        });
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+    await trackActive(page);
+    await openConfusingLabelMenu(page, 1);
+    await page.keyboard.press('1');
+    await expect.poll(() => status(page)).toContain('Category selected');
+    await expectActive(page, 1);
+    expect(await moves(page)).toEqual([]);
+
+    await page.keyboard.press('1');
+    await expectValue(page, 1, 'Confusing / English meaning unclear / Meme or cultural reference unclear');
+    await expectActive(page, 2);
+    expect(await moves(page)).toEqual([{ num: 2, trans1: 'Confusing / English meaning unclear / Meme or cultural reference unclear' }]);
+  });
+
+  test('a Confusing leaf pick advances past the empty Trans3 when made on Trans2', async ({ page }) => {
+    await page.keyboard.press('ArrowDown');
+    await expectActive(page, 2);
+    await openConfusingLabelMenu(page, 2);
+    await page.keyboard.press('3');
+    await expectValue(page, 2, 'Confusing / Task input issue');
+    await expectActive(page, 4);
+  });
+});
+
 test.describe('failed label click', { tag: '@logic' }, () => {
   test('the cursor stays and the status says not applied when the platform ignores a leaf click', async ({ page }) => {
     await trackActive(page);
@@ -320,18 +396,16 @@ test.describe('label badge rendering', { tag: '@perf' }, () => {
 });
 
 test.describe('X clears the active score', { tag: '@logic' }, () => {
-  test('X on a scored translation clears it and stays on the same translation', async ({ page }) => {
+  test('X on a scored translation clears it and advances, like 3 and C', async ({ page }) => {
     await page.keyboard.press('3');
     await expectValue(page, 1, '3 Points');
     await expectActive(page, 2);
     await page.keyboard.press('ArrowUp');
     await expectActive(page, 1);
-    await trackActive(page);
     await page.keyboard.press('x');
     await expectValue(page, 1, '');
-    await expect.poll(() => status(page)).toBe('Trans1 cleared');
-    await expectActive(page, 1);
-    expect(await moves(page)).toEqual([]);
+    await expect.poll(() => status(page)).toBe('Trans1 cleared → Trans2');
+    await expectActive(page, 2);
   });
 
   test('X on an empty translation says it is already empty', async ({ page }) => {
@@ -340,14 +414,13 @@ test.describe('X clears the active score', { tag: '@logic' }, () => {
     await expectActive(page, 1);
   });
 
-  test('X during a label pick is ignored: nothing is cleared and label mode stays', async ({ page }) => {
-    // The brief expected X to leave label mode; the code's label-mode branch
-    // ignores every non-number, non-arrow key, so X is inert here.
+  test('X during a label pick cancels it like Esc: badges gone, score kept, cursor stays', async ({ page }) => {
+    // X cancels the pick only — it does not also clear the score (that takes a second X).
     await openLabelMenu(page, 1);
     await page.keyboard.press('x');
+    await expect.poll(() => status(page)).toBe('Label pick cancelled');
+    await expect(page.locator('.tl-num-badge')).toHaveCount(0);
     await expectValue(page, 1, '2 Points');
-    await expect(page.locator('.tl-num-badge').first()).toBeVisible();
-    await expect.poll(() => expanded(page, 1)).toBe('true');
     await expectActive(page, 1);
   });
 });

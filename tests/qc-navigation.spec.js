@@ -103,7 +103,8 @@ test.describe('tab round trip', { tag: '@logic' }, () => {
     await page.keyboard.press('ArrowDown');
     await expectSelected(page, 4);
     await page.keyboard.press('c');
-    await expectScore(page, 4, 'Confusing');
+    await page.keyboard.press('3');
+    await expectScore(page, 4, 'Confusing / Task input issue');
 
     await clickTab(page, 1);
     await expectScore(page, 4, '2 Points / Accuracy');
@@ -111,7 +112,7 @@ test.describe('tab round trip', { tag: '@logic' }, () => {
     await expectSelected(page, 4);
 
     await clickTab(page, 0);
-    await expectScore(page, 4, 'Confusing');
+    await expectScore(page, 4, 'Confusing / Task input issue');
     await expectSelected(page, 4);
   });
 });

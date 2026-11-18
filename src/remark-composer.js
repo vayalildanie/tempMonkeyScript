@@ -290,7 +290,7 @@
       Array.from(modulesBySuffix(' Score').keys()).sort((a, b) => a - b).forEach((n) => {
         const t = scoreText(n);
         if (/^2 Points/.test(t)) parts.push(`Trans${n} (2 Points)`);
-        else if (t === 'Confusing') parts.push(`Trans${n} (Confusing)`);
+        else if (t === 'Confusing / Other / open feedback') parts.push(`Trans${n} (Confusing)`);
       });
       return parts.length ? `Likely need remarks: ${parts.join(', ')}` : 'No translations need remarks';
     }
@@ -985,31 +985,29 @@
       });
     }
 
+    // What blocks a submit on this row, as a toast message — '' when nothing does.
+    function submitBlocker() {
+      const { scoreable, incomplete } = scoringShortcuts.checkCompleteness();
+      const noRemark = missingRemarkNumbers(scoreable, incomplete);
+      if (!incomplete.length && !noRemark.length) return '';
+      const names = (nums) => nums.map((n) => `Trans${n}`).join(', ');
+      const parts = [];
+      if (incomplete.length) parts.push(`<b>${names(incomplete)}</b> ${incomplete.length === 1 ? 'needs' : 'need'} a complete label`);
+      if (noRemark.length) parts.push(`<b>${names(noRemark)}</b> ${noRemark.length === 1 ? 'needs' : 'need'} a remark`);
+      return `⛔ Not submitted — ${parts.join('; ')}.`
+        + `<span class="tl-toast-sub">Fix it, or press Space / click Submit with the mouse to`
+        + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`;
+    }
+
     function performCheck(e) {
       const checkMode = CHECK_MODES[checkModeIdx];
       if (checkMode === 'off') return;
-      const { scoreable, incomplete } = scoringShortcuts.checkCompleteness();
-      const noRemark = missingRemarkNumbers(scoreable, incomplete);
-      if (incomplete.length || noRemark.length) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        const names = (nums) => nums.map((n) => `Trans${n}`).join(', ');
-        const parts = [];
-        if (incomplete.length) parts.push(`<b>${names(incomplete)}</b> ${incomplete.length === 1 ? 'needs' : 'need'} a complete label`);
-        if (noRemark.length) parts.push(`<b>${names(noRemark)}</b> ${noRemark.length === 1 ? 'needs' : 'need'} a remark`);
-        Utils.showToast(
-          `⛔ Not submitted — ${parts.join('; ')}.`
-          + `<span class="tl-toast-sub">Fix it, or press Space / click Submit with the mouse to`
-          + ` override (<span class="tl-kbd">${CFG.keyCycleCheck.toUpperCase()}</span> cycles this check).</span>`
-        );
-        return;
-      }
-      // Everything labelled and remarked where needed — a clean pass, worth confirming instead of staying silent.
-      Utils.showToast('✅ Check passed — every populated translation is labelled and has a remark where one is needed.', 1600, 'ok');
-      if (checkMode === 'submit') {
-        e.preventDefault(); // this key's own effect is replaced by the synthesized Space below
-        Utils.dispatchNativeSpace();
-      }
+      // Label Check confirms a clean pass and lets Enter through; Submit Check also submits (native Space).
+      Utils.runSubmitGate(e, {
+        check: submitBlocker,
+        submit: checkMode === 'submit',
+        passToast: '✅ Check passed — every populated translation is labelled and has a remark where one is needed.',
+      });
     }
 
     function cycleCheckMode() {

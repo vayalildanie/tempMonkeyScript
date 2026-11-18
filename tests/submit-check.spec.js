@@ -220,9 +220,10 @@ test.describe('remark gate', { tag: '@logic' }, () => {
     ['a non-3 score has an empty remark', { 2: '2 Points / Grammar' }, {}, true],
     ['a non-3 score has a whitespace-only remark', { 2: '2 Points / Grammar' }, { 2: '  \n ' }, true],
     ['a non-3 score has a remark', { 2: '2 Points / Grammar' }, { 2: 'needs a fix' }, false],
-    ['Confusing has an empty remark', { 4: 'Confusing' }, {}, true],
+    ['Confusing has an empty remark', { 4: 'Confusing / Task input issue' }, {}, true],
     ['3 Points has an empty remark', {}, {}, false],
     ['a label is missing though a remark is present', { 4: '2 Points' }, { 4: 'has a remark' }, true],
+    ['a Confusing label is missing though a remark is present', { 4: 'Confusing' }, { 4: 'has a remark' }, true],
   ];
 
   async function expectOutcome(page, mode, blocked) {

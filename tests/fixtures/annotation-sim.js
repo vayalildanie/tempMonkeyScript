@@ -18,6 +18,12 @@
     'Register',
     'Other',
   ];
+  var CONFUSING_LEAVES = [
+    'English meaning unclear',
+    'Necessary context missing',
+    'Task input issue',
+    'Other / open feedback',
+  ];
 
   window.__fixture = {
     submitCount: 0,
@@ -105,7 +111,7 @@
     return column([
       menuItem('3 Points', '3 Points', false),
       menuItem('2 Points', '2 Points', true),
-      menuItem('Confusing', 'Confusing', false),
+      menuItem('Confusing', 'Confusing', true),
     ]);
   }
 
@@ -124,10 +130,25 @@
     return column([menuItem('Grammar', key, false)]);
   }
 
+  function confusingCategoryColumn() {
+    var prefix = 'Confusing' + SPLIT;
+    return column(CONFUSING_LEAVES.map(function (label, index) {
+      // Mirrors categoryColumn(): only the first item ("English meaning
+      // unclear") drills further, so tests can tell a category click from
+      // a terminal leaf. The rest (indices 1-3) are leaves straight off
+      // Confusing, matching the real tree's mixed depth.
+      return menuItem(label, prefix + label, index === 0);
+    }));
+  }
+  function confusingLeafColumn() {
+    var key = 'Confusing' + SPLIT + 'English meaning unclear' + SPLIT + 'Meme or cultural reference unclear';
+    return column([menuItem('Meme or cultural reference unclear', key, false)]);
+  }
+
   function displayFromKey(pathKey, previous) {
     if (pathKey === '3 Points' || pathKey === 'Confusing' || pathKey === '2 Points') return pathKey;
     var parts = pathKey.split(SPLIT);
-    if (parts[0] !== '2 Points') return previous ? previous + ' / ' + pathKey : pathKey;
+    if (parts[0] !== '2 Points' && parts[0] !== 'Confusing') return previous ? previous + ' / ' + pathKey : pathKey;
     return parts.join(' / ');
   }
 
@@ -197,6 +218,11 @@
         // "2 Points" so a failed leaf click cannot look like a completed label.
         setDisplayed(root, '2 Points');
         showNextColumn(drop, categoryColumn);
+      } else if (key === 'Confusing') {
+        setDisplayed(root, 'Confusing');
+        showNextColumn(drop, confusingCategoryColumn);
+      } else if (key.indexOf('Confusing' + SPLIT) === 0) {
+        showNextColumn(drop, confusingLeafColumn);
       } else {
         showNextColumn(drop, leafColumn);
       }
