@@ -13,7 +13,8 @@
   // value: red if it differs, a faint "agrees" if the same. Clicking a red
   // note (or its Adopt button) writes Annotator 2's value into Annotator 1
   // by driving the same cascader Module 1 drives; Undo restores the
-  // original. A summary panel names what's still outstanding.
+  // original. V merges both annotators' remarks into the live one (the live
+  // score stays); Z, or X then Z, puts Annotator 1's original back. A summary panel names what's still outstanding.
   //
   // This is a faithful, freshly re-derived port of the original v0.1.83
   // script's Module 3 (lines 1343–2193 of that script, kept outside this
@@ -46,6 +47,8 @@
     const CFG = {
       keyHelp: 'o',                    // show/hide the panel help text
       keyFlip: 'z',                    // flip the cursor's translation between Annotator 1's and 2's unit
+      keyCombine: 'v',                 // merge both annotators' remarks into the live one, keeping the live score (undo: Z)
+      combineJoin: '; ',               // what goes between the two remarks
       keyErase: 'x',                   // clear the cursor's score, then advance (see advanceOnErase)
       advanceOnErase: true,            // set false to stay on the cleared translation
       keySubmit: 'Enter',              // submit the row (native Space), after submitBlocker() passes
@@ -74,7 +77,7 @@
     // The preserved pair: each translation's two ORIGINAL { score, remark } units, taken when the row was scraped and
     // never emptied afterwards (a clear, a re-scrape, or a hand edit changes only the live fields). Z flips the live
     // unit between the two; `manual` holds a hand-edited unit Z was about to overwrite. Discarded on a row change.
-    let pairs = new Map();       // n -> { a, b, manual }
+    let pairs = new Map();       // n -> { a, b, manual, combined } — combined: the remark text V wrote, or null
     let swappedNums = [];        // translations whose live Annotator 1 unit currently equals Annotator 2's (for the summary)
     let remarkTouched = false;   // the user typed in a Remarks box since the last scrape (stops the lazy-load verify)
     let pairsTouched = false;    // the user flipped or relabeled something since the last scrape (also stops the verify)
@@ -150,7 +153,18 @@
       if (sameUnit(pair.a, pair.b)) return null;
       if (sameUnit(live, pair.a)) return 'b';
       if (sameUnit(live, pair.b)) return 'a';
+      if (isCombinedLive(pair, live)) return 'a'; // V's result (even with X's cleared score): undo it
       return pair.b.score ? 'b' : 'a';
+    }
+    // The live remark is the one V wrote for this pair (the score is not compared: V keeps the live one, X may clear it).
+    function isCombinedLive(pair, live) {
+      return !!pair && pair.combined !== null && live.remark.trim() === pair.combined;
+    }
+    // Both ORIGINAL remarks as one: trimmed, empties dropped, identical collapsed, joined with CFG.combineJoin.
+    function combinedRemark(pair) {
+      const a = String(pair.a.remark || '').trim();
+      const b = String(pair.b.remark || '').trim();
+      return [a, b].filter((t, i, all) => t && all.indexOf(t) === i).join(CFG.combineJoin);
     }
     function describeUnit(u) {
       const remark = String(u.remark || '').trim();
@@ -297,7 +311,7 @@
       if (side === null) { setCursorStatus(`Trans${n} matches`); return false; }
       if (side === 'b' && !pair.b.score) { setSummary(`Annotator 2 has no score for Trans${n} — set it manually.`); return false; }
       // A live unit that is neither original (a hand edit) is kept before it is overwritten.
-      if (!sameUnit(live, pair.a) && !sameUnit(live, pair.b) && (live.score || live.remark.trim())) pair.manual = live;
+      if (!sameUnit(live, pair.a) && !sameUnit(live, pair.b) && !isCombinedLive(pair, live) && (live.score || live.remark.trim())) pair.manual = live;
       pairsTouched = true;
       adopting = true;
       setSummary(`Swapping Trans${n}…`);
@@ -306,6 +320,7 @@
         await writeSide(n, side);
         snapA[n] = pair[side].score; // Annotator 1 now holds that side -> keep the snapshots consistent for Annotator 2's tab
         remA[n] = pair[side].remark;
+        pair.combined = null;
         log(`Trans${n}: flipped to ${side === 'b' ? 'Annotator 2' : 'Annotator 1'} = ${describeUnit(pair[side])}`);
         ok = true;
       } catch (e) {
@@ -316,6 +331,38 @@
         render();
       }
       return ok;
+    }
+
+    // V: write both annotators' original remarks, combined, into Annotator 1's live Remarks box. The live score is left as
+    // it is, and the preserved pair is untouched, so Z (or X then Z) always gets Annotator 1's original back.
+    // Returns true when it wrote (the V handler advances only then).
+    function combineRemarks(n) {
+      if (n == null) { setCursorStatus('No translation selected'); return false; }
+      if (scraping || adopting || !ready) return false;
+      if (activeTabIndex() !== 0) { setSummary('<span style="color:#c92a2a;">Switch to the <b>Annotator&nbsp;1</b> tab to combine.</span>'); return false; }
+      if (getRowSig() !== lastRowSig) { setCursorStatus('The row just changed — wait a moment, then press again'); return false; }
+      const pair = pairs.get(n);
+      const ta = remarkTextarea(n);
+      if (!pair || !ta) return false;
+      const text = combinedRemark(pair);
+      if (!text) { setCursorStatus(`Trans${n}: no remarks to combine`); return false; }
+      if (ta.value.trim() === text) { setCursorStatus(`Trans${n}: remarks already combined`); return false; }
+      // A hand-typed remark that V is about to replace is kept, like Z keeps one.
+      const typed = ta.value.trim();
+      if (typed && typed !== pair.a.remark.trim() && typed !== pair.b.remark.trim() && typed !== pair.combined) pair.manual = readUnit(n);
+      adopting = true;
+      try {
+        Utils.setNativeValue(ta, text);
+        pair.combined = text;
+        remA[n] = text;
+        pairsTouched = true;
+        setCursorStatus(`Trans${n}: remarks combined`);
+        log(`Trans${n}: remarks combined`);
+      } finally {
+        adopting = false;
+        render();
+      }
+      return true;
     }
 
     // Clear a Trans's score (click the cascader's built-in clear button).
@@ -531,7 +578,7 @@
         await clickTab(0);                                              // switch back to Annotator 1
         snapA = a; snapB = b; remA = ra; remB = rb;
         pairs = new Map(); // a new read of the row replaces the previous pairs
-        for (const n of nums) pairs.set(n, { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] }, manual: null });
+        for (const n of nums) pairs.set(n, { a: { score: a[n], remark: ra[n] }, b: { score: b[n], remark: rb[n] }, manual: null, combined: null });
         ready = true;
         scrapeFailed = false;
         lastRowSig = sigAtStart;
@@ -614,9 +661,10 @@
         }
         const cur = readUnit(n);       // the live score and remark of the current tab (= the current annotator)
         const other = { score: otherSnap[n] || '', remark: otherRem[n] || '' }; // the other annotator's snapshot unit
-        const same = sameUnit(cur, other);
-        if (!same) diffs.push(n);
         const pair = pairs.get(n);
+        const isCombined = !onB && isCombinedLive(pair, cur); // V's result: the reviewer's own call, counted as reconciled
+        const same = sameUnit(cur, other);
+        if (!same && !isCombined) diffs.push(n);
         // Annotator 1's live unit equals Annotator 2's original while the two originals differ: shown as swapped.
         const isSwapped = !onB && !!pair && !sameUnit(pair.a, pair.b) && sameUnit(cur, pair.b);
         if (isSwapped) swapped.push(n);
@@ -624,7 +672,10 @@
           ? ` <span class="qc-was" title="${Utils.escapeHtml(`${pair.manual.score || '(not scored)'} + ${pair.manual.remark}`)}">· your edit: ${Utils.escapeHtml(describeUnit(pair.manual))}</span>` : '';
         const badge = ensureBadge(mod);
         let html, cls;
-        if (isSwapped) { // "swapped + what it was + undo" only on the Annotator 1 tab
+        if (isCombined) {
+          html = `✓ Remarks combined <span class="qc-was">· was: ${Utils.escapeHtml(describeUnit(pair.a))}</span>${wasNote} <span class="qc-undo" data-undo="${n}">Undo</span>`;
+          cls = 'qc-badge qc-adopted';
+        } else if (isSwapped) { // "swapped + what it was + undo" only on the Annotator 1 tab
           html = `✓ Swapped to Annotator 2 <span class="qc-was">· was: ${Utils.escapeHtml(describeUnit(pair.a))}</span>${wasNote} <span class="qc-undo" data-undo="${n}">Undo</span>`;
           cls = 'qc-badge qc-adopted';
         } else if (same) {
@@ -831,6 +882,7 @@
           <div id="qc-hdr"></div>
           <div class="qc-hint" style="display:flex;flex-wrap:wrap;gap:7px 18px;align-items:center;">
             <span style="white-space:nowrap;"><span class="qc-kbd">Z</span> Swaps Score + Remark</span>
+            <span style="white-space:nowrap;"><span class="qc-kbd">V</span> Combines Remarks</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">C</span> Confusing</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">X</span> Clear Label</span>
             <span style="white-space:nowrap;"><span class="qc-kbd">1</span>–<span class="qc-kbd">9</span> Label/Score Selection</span>
@@ -992,6 +1044,11 @@
         // Every Z that writes (either direction of the flip) moves on to the next translation; a refused Z stays put.
         // To flip one back, step up and press Z again.
         Promise.resolve(flip(n)).then((ok) => { if (ok && cursor.get() === n) advanceFocus(); });
+        return;
+      }
+      if (k === CFG.keyCombine) {
+        e.preventDefault();
+        if (combineRemarks(n) && cursor.get() === n) advanceFocus(); // like Z: only a write moves on
         return;
       }
       if (k === CFG.keyErase) {
