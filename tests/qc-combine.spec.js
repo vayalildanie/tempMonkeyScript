@@ -227,3 +227,42 @@ test.describe('V guards', { tag: '@logic' }, () => {
     expect(u.remark).not.toContain('b one');
   });
 });
+
+// Review fixes (v1.5.7 final review): "combined" must mean the same thing to the badge and to Z.
+test.describe('combined state is only a real merge', { tag: '@logic' }, () => {
+  const data = (a1, a2) => ({ a1: { ...DATA.a1, 1: a1 }, a2: { ...DATA.a2, 1: a2 } });
+
+  test('V that writes Annotator 1\'s own remark back is not shown as combined, and Z flips to Annotator 2', async ({ page }) => {
+    const a = { score: '2 Points / Fluency', remark: 'one' };
+    const b = { score: '3 Points', remark: '' };
+    await bootQCWith(page, data(a, b));
+    await setRemark(page, 1, 'oops');
+    await page.keyboard.press('v'); // the combined text is just "one"
+    await expectUnit(page, 1, a);
+    await expect(badge(page, 1)).not.toContainText('Remarks combined');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('z');
+    await expectUnit(page, 1, b);
+  });
+
+  test('V on a pair that agrees shows no combined badge or dead Undo', async ({ page }) => {
+    const same = { score: '2 Points / Fluency', remark: 'one' };
+    await bootQCWith(page, data(same, same));
+    await setRemark(page, 1, 'oops');
+    await page.keyboard.press('v');
+    await expect(badge(page, 1)).not.toContainText('Remarks combined');
+    await expect(badge(page, 1).locator('.qc-undo')).toHaveCount(0);
+  });
+
+  test('a combined result that equals Annotator 2\'s unit is counted as swapped, not combined', async ({ page }) => {
+    const a = { score: '2 Points / Fluency', remark: '' };
+    const b = { score: '3 Points', remark: 'two' };
+    await bootQCWith(page, data(a, b));
+    await page.keyboard.press('3');
+    await expect.poll(async () => (await unit(page, 1)).score).toBe('3 Points');
+    await page.keyboard.press('v');
+    await expectUnit(page, 1, b);
+    await expect(badge(page, 1)).toContainText('Swapped');
+    await expect(page.locator('#qc-summary')).toContainText('1 swapped');
+  });
+});

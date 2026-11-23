@@ -330,3 +330,11 @@ test.describe('one remark rule for the gate and Likely need remarks', { tag: '@l
     });
   }
 });
+
+test.describe('Likely need remarks ignores unfinished labels', { tag: '@logic' }, () => {
+  test('a bare Confusing (label pick still open) is not listed', async ({ page }) => {
+    await setScores(page, { 1: '3 Points', 2: '3 Points', 4: 'Confusing', 5: '3 Points', 6: '3 Points', 7: '3 Points' });
+    await page.keyboard.press('o');
+    await expect(page.locator('#rmd-likely')).toHaveText('No translations need remarks');
+  });
+});

@@ -289,7 +289,7 @@
       const parts = [];
       Array.from(modulesBySuffix(' Score').keys()).sort((a, b) => a - b).forEach((n) => {
         const t = scoreText(n);
-        if (Utils.needsRemark(t)) parts.push(`Trans${n} (${/^Confusing/.test(t) ? 'Confusing' : '2 Points'})`);
+        if (Utils.needsRemark(t)) parts.push(`Trans${n} (${/^Confusing/.test(t) ? 'Confusing' : /^2 Points/.test(t) ? '2 Points' : t})`);
       });
       return parts.length ? `Likely need remarks: ${parts.join(', ')}` : 'No translations need remarks';
     }

@@ -107,7 +107,7 @@ simulator (its file name must start with `quality_` so the module starts).
 The specs are grouped by purpose (`scoring`, `submit-check`,
 `remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
 `qc-swap`, `qc-combine`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
-`capture-contract` — 15 files, 319 tests as of `v1.5.7`) and tagged `@logic`
+`capture-contract` — 15 files, 323 tests as of `v1.5.7`) and tagged `@logic`
 (behavior), `@contract` (selector and fixture contracts), `@layout` (viewport
 and legend) or `@perf` (mutation and render counts). `npx playwright test
 --grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/

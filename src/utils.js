@@ -481,7 +481,7 @@
     // itself, so splitting the path on "/" would misread it.
     needsRemark(text) {
       const t = String(text == null ? '' : text).trim();
-      if (t === '' || /^3 Points/.test(t)) return false;
+      if (t === '' || t === 'Confusing' || /^3 Points/.test(t)) return false; // a bare Confusing is still being picked
       if (/^Confusing \/ /.test(t)) return t === 'Confusing / Other / open feedback';
       return true;
     },

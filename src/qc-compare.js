@@ -156,9 +156,12 @@
       if (isCombinedLive(pair, live)) return 'a'; // V's result (even with X's cleared score): undo it
       return pair.b.score ? 'b' : 'a';
     }
-    // The live remark is the one V wrote for this pair (the score is not compared: V keeps the live one, X may clear it).
+    // The live unit is V's merge of this pair: its remark is the one V wrote (the score is not compared: V keeps the
+    // live one, X may clear it). Not "combined" when the pair agrees, or when the live unit is just one of the two
+    // originals (V wrote an original back): Z and the badge must then treat it as that original, not as a merge.
     function isCombinedLive(pair, live) {
-      return !!pair && pair.combined !== null && live.remark.trim() === pair.combined;
+      return !!pair && pair.combined !== null && !sameUnit(pair.a, pair.b)
+        && !sameUnit(live, pair.a) && !sameUnit(live, pair.b) && live.remark.trim() === pair.combined;
     }
     // Both ORIGINAL remarks as one: trimmed, empties dropped, identical collapsed, joined with CFG.combineJoin.
     function combinedRemark(pair) {
