@@ -289,8 +289,7 @@
       const parts = [];
       Array.from(modulesBySuffix(' Score').keys()).sort((a, b) => a - b).forEach((n) => {
         const t = scoreText(n);
-        if (/^2 Points/.test(t)) parts.push(`Trans${n} (2 Points)`);
-        else if (t === 'Confusing / Other / open feedback') parts.push(`Trans${n} (Confusing)`);
+        if (Utils.needsRemark(t)) parts.push(`Trans${n} (${/^Confusing/.test(t) ? 'Confusing' : /^2 Points/.test(t) ? '2 Points' : t})`);
       });
       return parts.length ? `Likely need remarks: ${parts.join(', ')}` : 'No translations need remarks';
     }
@@ -973,13 +972,14 @@
     // Reads completeness through scoringShortcuts.checkCompleteness() rather
     // than any of Scoring Shortcuts' own DOM-reading internals — see this
     // file's header comment.
-    // Translations whose label is complete and whose score is not 3 Points but
-    // whose own Remarks textarea is blank. Read live from the textarea (never
+    // Translations whose label is complete, needs a remark (Utils.needsRemark:
+    // not 3 Points, not a self-explanatory Confusing leaf) and whose own
+    // Remarks textarea is blank. Read live from the textarea (never
     // the composer's proxy). A translation with no Remarks textarea at all is
     // left alone: there is nothing the annotator could fill in.
     function missingRemarkNumbers(scoreable, incomplete) {
       return scoreable.filter((n) => {
-        if (incomplete.indexOf(n) !== -1 || /^3 Points/.test(scoreText(n))) return false;
+        if (incomplete.indexOf(n) !== -1 || !Utils.needsRemark(scoreText(n))) return false;
         const ta = remarkTextarea(n);
         return !!ta && ta.value.trim() === '';
       });

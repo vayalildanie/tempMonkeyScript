@@ -1,6 +1,6 @@
 # tempMonkeyScript
 
-> **Current version: `v1.5.6`, on `main`.** It is covered by an automated
+> **Current version: `v1.5.7`, on `main`.** It is covered by an automated
 > Playwright suite (`npm test`) but not yet verified on the live NOVA page.
 > Installed Tampermonkey copies fetch from GitHub `main`, so they pick it up
 > the next time Tampermonkey refreshes the `@require`d files. Submit Check
@@ -55,7 +55,7 @@ page:
    from scratch, by keyboard or with one click.
 
 It also holds back Enter-to-submit while a populated translation is still
-missing a complete label, or is scored below 3 Points with an empty Remarks box.
+missing a complete label, or has a label that needs a remark (any 2 Points label, or Confusing's `Other / open feedback`) with an empty Remarks box.
 
 ## Install
 
@@ -106,8 +106,8 @@ simulator (its file name must start with `quality_` so the module starts).
 
 The specs are grouped by purpose (`scoring`, `submit-check`,
 `remark-target-selection`, `remark-writes`, `remark-mouse`, `remark-window`, `qc-navigation`,
-`qc-swap`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
-`capture-contract` — 14 files, 283 tests as of `v1.5.6`) and tagged `@logic`
+`qc-swap`, `qc-combine`, `qc-shortcuts`, `release-smoke`, `shared`, `harness`, `perf`,
+`capture-contract` — 15 files, 323 tests as of `v1.5.7`) and tagged `@logic`
 (behavior), `@contract` (selector and fixture contracts), `@layout` (viewport
 and legend) or `@perf` (mutation and render counts). `npx playwright test
 --grep @logic` runs just the behavior tests. `PLANNING/reports/v1.5.3/
@@ -182,7 +182,7 @@ since the submit check is a page-level guard, not a composer-UI feature)
 | `O` | Open/close the Remark Options window. On open, the Remarks box of the first translation *with text* that isn't scored 3 Points is selected and outlined (empty/unscored counts); Trans1 if every score begins with 3 Points |
 | `↑` / `↓` / `←` / `→` (or `W` / `S` / `A` / `D`) | While the window is open **and focus is outside any text box**: choose which translation's Remarks box is written to. `↑`/`↓` step, `←`/`→` swap columns (Trans1–3 / Trans4–7). The first `↑` jumps to Trans1 unless an arrow, Remarks click, or direct Remarks edit has already consumed that shortcut |
 | `Z` | Cycle the submit check: Label Check → Submit Check → Check Off |
-| `Enter` | Run the check now, safely — blocks on an incomplete label, or on a fully labelled non-3-Points translation whose own Remarks box is empty or only whitespace, per the current check mode (Label Check and Submit Check; Check Off never blocks). The blocked toast names each translation and whether its label or its remark is missing. In Submit Check mode, a clean pass also submits (synthesizes Space) |
+| `Enter` | Run the check now, safely — blocks on an incomplete label, or on a fully labelled translation that needs a remark (any 2 Points label, or `Confusing / Other / open feedback`; 3 Points and the other Confusing sub-labels do not) whose own Remarks box is empty or only whitespace, per the current check mode (Label Check and Submit Check; Check Off never blocks). The blocked toast names each translation and whether its label or its remark is missing. In Submit Check mode, a clean pass also submits (synthesizes Space) |
 | `Q` | Quote the current selection into the highlighted Remarks box as `"…"` (no `Trans N` or `Note` prefix). Quotable sources are a translation's text and the left-hand Note field; the whole selection must lie inside one of them, so select-all, a selection across two translations, Note plus a translation, Context-EN, or a title plus its text is refused and writes nothing. If the window is closed, it opens first at the initial target above. With nothing selected it opens if needed and puts the cursor in the composer's edit box |
 | `Esc` | While a Remarks box (the popover's edit box or a translation's own) has focus: take focus off it, leaving its text, the target, and the window as they are. Otherwise close the window, or close its Settings panel if that's open |
 
@@ -206,7 +206,8 @@ same selection writes the quote once.
 Under the edit box a "Likely need remarks" line lists translations scored
 `2 Points` (bare or fully labelled) or Confusing's `Other / open feedback` leaf
 specifically; every other Confusing sub-label is self-explanatory and is left
-out, as are `3 Points` and unscored ones. It is informational only — it never changes the target or
+out, as are `3 Points` and unscored ones. Submit Check's remark gate uses the
+same rule (`Utils.needsRemark`). The line is informational only — it never changes the target or
 blocks a write. While the window is open, Scoring Shortcuts' own active-score
 highlight is hidden so only the Remarks target is outlined. These keys are
 listed in the Scoring Shortcuts legend (`Q`, `O`, `Z`, `Enter`, `Esc`).
@@ -227,6 +228,7 @@ window reset to a fixed size every time it was reopened.
 | `1`–`9`, `0` | While a label menu is open: pick the Nth item |
 | `X` | Clear the active translation's score, then move to the next translation (like `Z`; a refused clear stays put) |
 | `Enter` | Submit the row (sends the platform's own `Space` submit). Ignored while typing a remark or while a label menu is open. Goes through the same `Utils.runSubmitGate` as Module 2's Submit Check; QC has no checks yet (`submitBlocker()` in `qc-compare.js` is where they go) |
+| `V` | Combine both annotators' remarks (`A; B`) into Annotator 1's Remarks box, keeping the score currently selected, then move on. `Z` (or `X`, then `Z`) restores Annotator 1's original; Annotator 2's value is never touched |
 | `Z` | Flip the active translation's Score **and** Remark between Annotator 1's and Annotator 2's original values (press again on it to flip back). Both originals are kept for the row, so if you clear or edit either side, `Z` restores from them instead of stopping. A hand-edited unit is noted in the badge before it is overwritten. Every `Z` that writes moves on to the next translation (to flip one back, step up and press `Z`); a refused `Z` stays put (Annotator 2's tab is showing, nothing differs, or Annotator 2 has no score) |
 | `↑` / `↓` (or `W` / `S`) | Move the active translation. Its Score and its Remarks box are outlined together; the Swap/Undo badge stays between them |
 | `←` / `→` (or `A` / `D`) | Swap columns (Trans1–3 / Trans4–7) |
@@ -392,14 +394,18 @@ around it:
   original; the header comment was simply stale. (Module 3 only gained real
   arrow-key navigation later, in `v1.3.2`.)
 
-## Known unverified (as of `v1.5.6`)
+## Known unverified (as of `v1.5.7`)
 
 Things the automated suite cannot prove, because the fixture is a *model* of
 the page and the captured HTML contains no event listeners. Check these on a
-real annotation row (`PLANNING/reports/v1.5.5/live-checklist.md` has the
-step-by-step). Items marked `v1.5.6` are new in this release; the rest were
+real annotation row (`PLANNING/reports/v1.5.7/live-checklist.md` has the
+step-by-step). Items marked `v1.5.7` are new in this release; the rest were
 listed under earlier versions and are still unchecked on live NOVA:
 
+- **`v1.5.7` Confusing remark gate and `V`.** That every Confusing sub-label
+  except `Other / open feedback` really needs no remark on the platform, and
+  that the `; ` join reads well and saves correctly in a QC remark, were only
+  checked against the model of the page.
 - **`v1.5.6` Confusing sub-labels.** The fixture's Confusing tree copies the
   labels and shape from screenshots, and every path (C-1-1 … C-4) is tested
   on both pages. That live NOVA displays the remark-needing leaf as exactly
@@ -458,6 +464,20 @@ listed under earlier versions and are still unchecked on live NOVA:
   outline looks against the live layout.
 
 ## Version history
+
+### `v1.5.7` — Confusing remark gate, QC `V` combine
+
+- **Submit Check no longer asks for a remark on self-explanatory Confusing
+  labels.** Only any 2 Points label and `Confusing / Other / open feedback`
+  need one; 3 Points and every other Confusing sub-label pass, so Submit
+  Check submits them straight away. The gate and "Likely need remarks" now
+  share one rule (`Utils.needsRemark`), so they can no longer disagree; a
+  label NOVA adds later still blocks until it is exempted there.
+- **QC Compare `V` combines remarks.** It writes Annotator 1's and Annotator
+  2's original remarks together (`A; B`, empties and duplicates dropped) into
+  Annotator 1's box and keeps the score currently selected. `Z`, or `X` then
+  `Z`, puts Annotator 1's original back; the preserved pair is never changed.
+  A combined translation counts as reconciled in the summary.
 
 ### `v1.5.6` — Confusing sub-labels, X clears, Enter on QC Compare
 

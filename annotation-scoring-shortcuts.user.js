@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Annotation Scoring Shortcuts
 // @namespace    translation-tool-injection
-// @version      1.5.6
+// @version      1.5.7
 // @description  Keyboard shortcuts to score and label the 7 translations on the annotation workbench
 // @match        https://nova.xiaohongshu.com/model-studio/workspace/*
 // @run-at       document-idle
@@ -14,6 +14,12 @@
 // ==/UserScript==
 
 /*
+ * v1.5.7: Submit Check only asks for a remark where one is needed (any 2
+ * Points label, or Confusing / Other / open feedback), the same rule as
+ * "Likely need remarks", so the other Confusing labels pass and auto-submit.
+ * On QC Compare, V combines both annotators' remarks into Annotator 1's box
+ * (score kept); Z, or X then Z, restores Annotator 1's original.
+ *
  * v1.5.6 follows NOVA's new Confusing sub-labels: C now opens a label pick
  * like 2 does (on both pages) and only advances on a true leaf, and "Likely
  * need remarks" flags only Confusing / Other / open feedback. X clears the
@@ -47,7 +53,7 @@
   // any module is instantiated, since each module now reads TL.SCRIPT_VERSION
   // from a separate file instead of a shared closure variable.
   window.TL = window.TL || {};
-  TL.SCRIPT_VERSION = 'v1.5.6';
+  TL.SCRIPT_VERSION = 'v1.5.7';
 
   const scoringShortcuts = TL.ScoringShortcuts(TL.Utils);
   const remarkComposer = TL.RemarkComposer(TL.Utils, scoringShortcuts);
