@@ -220,7 +220,10 @@ test.describe('remark gate', { tag: '@logic' }, () => {
     ['a non-3 score has an empty remark', { 2: '2 Points / Grammar' }, {}, true],
     ['a non-3 score has a whitespace-only remark', { 2: '2 Points / Grammar' }, { 2: '  \n ' }, true],
     ['a non-3 score has a remark', { 2: '2 Points / Grammar' }, { 2: 'needs a fix' }, false],
-    ['Confusing has an empty remark', { 4: 'Confusing / Task input issue' }, {}, true],
+    ['a self-explanatory Confusing leaf has an empty remark', { 4: 'Confusing / Task input issue' }, {}, false],
+    ['a 3-level Confusing leaf has an empty remark', { 4: 'Confusing / English meaning unclear / Key word, phrase, or symbol unclear' }, {}, false],
+    ['Confusing / Other / open feedback has an empty remark', { 4: 'Confusing / Other / open feedback' }, {}, true],
+    ['Confusing / Other / open feedback has a remark', { 4: 'Confusing / Other / open feedback' }, { 4: 'why' }, false],
     ['3 Points has an empty remark', {}, {}, false],
     ['a label is missing though a remark is present', { 4: '2 Points' }, { 4: 'has a remark' }, true],
     ['a Confusing label is missing though a remark is present', { 4: 'Confusing' }, { 4: 'has a remark' }, true],
@@ -291,4 +294,39 @@ test.describe('dispatchNativeSpace target', { tag: '@logic' }, () => {
     expect(f.spaceEvents.map((e) => [e.type, e.target])).toEqual([['keydown', 'BUTTON'], ['keyup', 'BUTTON']]);
     expect(f.submitCount).toBe(1);
   });
+});
+
+test.describe('one remark rule for the gate and Likely need remarks', { tag: '@logic' }, () => {
+  const ALL_THREE = { 1: '3 Points', 2: '3 Points', 4: '3 Points', 5: '3 Points', 6: '3 Points', 7: '3 Points' };
+  const LEAVES = [
+    '2 Points / Fluency',
+    'Confusing / English meaning unclear / Meme or cultural reference unclear',
+    'Confusing / English meaning unclear / Key word, phrase, or symbol unclear',
+    'Confusing / English meaning unclear / Sentence meaning or logical relation unclear',
+    'Confusing / Necessary context missing / Essential referent unresolved',
+    'Confusing / Necessary context missing / Essential linked context missing',
+    'Confusing / Task input issue',
+    'Confusing / Other / open feedback',
+  ];
+
+  test('Submit Check submits once when the only non-3 labels are self-explanatory Confusing leaves with empty remarks', async ({ page }) => {
+    await cycleTo(page, 'submit');
+    await setScores(page, { ...ALL_THREE, 2: 'Confusing / Task input issue', 5: 'Confusing / Necessary context missing / Essential referent unresolved' });
+    await page.keyboard.press('Enter');
+    const f = await fixture(page);
+    expect(f.submitCount).toBe(1);
+    expect(f.spaceEvents.filter((e) => e.type === 'keydown').length).toBe(1);
+  });
+
+  for (const leaf of LEAVES) {
+    test(`the gate blocks exactly when Likely need remarks flags: ${leaf}`, async ({ page }) => {
+      await setScores(page, { ...ALL_THREE, 4: leaf });
+      await page.keyboard.press('o');
+      await expect(page.locator('#rmd-likely')).toBeVisible();
+      const flagged = (await page.locator('#rmd-likely').textContent()).includes('Trans4');
+      await page.keyboard.press('Escape'); // closes the composer
+      await page.keyboard.press('Enter');
+      expect(await enterPrevented(page)).toEqual([flagged]);
+    });
+  }
 });

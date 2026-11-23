@@ -471,6 +471,21 @@
       target.dispatchEvent(new KeyboardEvent('keyup', opts));
     },
 
+    // ---- Does this score need a remark? (v1.5.7) ----
+    // The one rule behind both the submit gate and "Likely need remarks".
+    // Exempt: unscored, 3 Points, and every Confusing sub-label except the
+    // open-feedback one (the others describe the problem on their own).
+    // Everything else — all 2 Points, and any label NOVA adds later — needs
+    // one, so an unknown label blocks rather than slipping through.
+    // The exception is matched as a whole string: the label contains a "/"
+    // itself, so splitting the path on "/" would misread it.
+    needsRemark(text) {
+      const t = String(text == null ? '' : text).trim();
+      if (t === '' || /^3 Points/.test(t)) return false;
+      if (/^Confusing \/ /.test(t)) return t === 'Confusing / Other / open feedback';
+      return true;
+    },
+
     // ---- Submit gate: check first, then submit with the native Space ----
     // Shared by Remark Composer's Enter check and QC Compare's Enter-to-submit.
     // `check()` returns '' (or null) when nothing blocks the submit, or an
