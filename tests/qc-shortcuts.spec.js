@@ -34,19 +34,15 @@ async function openConfusingLabelMenu(page, n) {
 test.describe('score keys', { tag: '@logic' }, () => {
   test.beforeEach(async ({ page }) => { await bootQC(page); });
 
-  for (const row of [
-    { key: '3', score: '3 Points' },
-  ]) {
-    test(`sets ${row.score} on the selected translation when ${row.key} is pressed`, async ({ page }) => {
-      await page.keyboard.press(row.key);
-      await expectScore(page, 1, row.score);
-      await expect.poll(() => cursorStatus(page)).toBe(`Trans1 = ${row.score} ✓`);
-      await expect.poll(() => expanded(page, 1)).toBe('false');
-      // characterizes current behaviour: the B1 brief expects an advance to
-      // Trans2, but relabel() never moves the cursor (only Z advances).
-      await expectSelected(page, 1);
-    });
-  }
+  test('sets 3 Points on the selected translation when 3 is pressed', async ({ page }) => {
+    await page.keyboard.press('3');
+    await expectScore(page, 1, '3 Points');
+    await expect.poll(() => cursorStatus(page)).toBe('Trans1 = 3 Points ✓');
+    await expect.poll(() => expanded(page, 1)).toBe('false');
+    // characterizes current behaviour: the B1 brief expects an advance to
+    // Trans2, but relabel() never moves the cursor (only Z advances).
+    await expectSelected(page, 1);
+  });
 
   test('X clears the selected translation\'s score and advances to the next', async ({ page }) => {
     await page.keyboard.press('ArrowDown');
@@ -106,9 +102,9 @@ test.describe('label menu', { tag: '@logic' }, () => {
     await expectSelected(page, 1);
   });
 
+  // One digit pick is enough here (a label whose name contains a "/"); scoring.spec.js runs all of 2-9 and 0
+  // through the same Utils.pickCascaderItem.
   for (const row of [
-    { key: '4', label: 'Fluency' },
-    { key: '2', label: 'Authenticity' },
     { key: '3', label: 'Unauthentic Vocabulary / Collocations' },
   ]) {
     test(`picks label "${row.label}" when ${row.key} is pressed with the menu open`, async ({ page }) => {
@@ -148,13 +144,10 @@ test.describe('label menu', { tag: '@logic' }, () => {
     await expectSelected(page, 1);
   });
 
-  // Every leaf of NOVA's real Confusing tree, by the keys after C (C-2-1 = C, 2, 1).
+  // A two-key path, a one-key path and the Other leaf, by the keys after C (C-1-1 = C, 1, 1). The full leaf matrix
+  // runs in scoring.spec.js: both pages share Utils.pickCascaderItem.
   for (const path of [
     { keys: ['1', '1'], value: 'Confusing / English meaning unclear / Meme or cultural reference unclear' },
-    { keys: ['1', '2'], value: 'Confusing / English meaning unclear / Key word, phrase, or symbol unclear' },
-    { keys: ['1', '3'], value: 'Confusing / English meaning unclear / Sentence meaning or logical relation unclear' },
-    { keys: ['2', '1'], value: 'Confusing / Necessary context missing / Essential referent unresolved' },
-    { keys: ['2', '2'], value: 'Confusing / Necessary context missing / Essential linked context missing' },
     { keys: ['3'], value: 'Confusing / Task input issue' },
     { keys: ['4'], value: 'Confusing / Other / open feedback' },
   ]) {
