@@ -155,31 +155,45 @@ test.describe('quoting', { tag: '@logic' }, () => {
     ['a title plus its translation text', 'title-and-text', false],
     ['the whole page (select all)', 'select-all', false],
   ];
-  for (const [label, key, accepted, exact] of sources) {
-    test(`Q ${accepted ? 'writes "text"' : 'refuses and writes nothing'} when the selection is ${label}`, async ({ page }) => {
+  for (const [label, key, , exact] of sources.filter((s) => s[2])) {
+    test(`Q writes "text" when the selection is ${label}`, async ({ page }) => {
       await setScores(page, ALL_EMPTY);
       await openComposer(page);
       await expectTarget(page, 1);
       const raw = await makeSelection(page, key);
       await page.keyboard.press('q');
-      if (accepted) {
-        const expected = key === 'tagged' ? 'Tagged words here' : raw.trim();
-        await expectRemarks(page, { 1: `"${expected}"`, 2: '', 4: '', 5: '' });
-        await expect(edit(page)).toHaveValue(`"${expected}"`);
-        // The token is the page's own text and nothing from the Note's chrome.
-        const token = (await remarksValues(page))[1];
-        expect(token).not.toMatch(/Collapse|Pictures|Small|Medium|Large|cover/);
-        if (exact) expect(token.replace(/\s+/g, '')).toBe(`"${exact}"`.replace(/\s+/g, ''));
-      } else {
-        await expect(page.locator('#rmd-hint')).toContainText('one translation or the Note');
-        await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
-        await expect(edit(page)).toHaveValue('');
-        // A refusal leaves the selection in place so it can be adjusted.
-        expect(await page.evaluate(() => window.getSelection().toString())).not.toBe('');
-      }
+      const expected = key === 'tagged' ? 'Tagged words here' : raw.trim();
+      await expectRemarks(page, { 1: `"${expected}"`, 2: '', 4: '', 5: '' });
+      await expect(edit(page)).toHaveValue(`"${expected}"`);
+      // The token is the page's own text and nothing from the Note's chrome.
+      const token = (await remarksValues(page))[1];
+      expect(token).not.toMatch(/Collapse|Pictures|Small|Medium|Large|cover/);
+      if (exact) expect(token.replace(/\s+/g, '')).toBe(`"${exact}"`.replace(/\s+/g, ''));
       await expectTarget(page, 1);
     });
   }
+
+  // A refusal writes nothing, so every refused selection can run on one page, one step each. The hint is cleared
+  // before each step so a stale one from the previous row cannot satisfy the assertion; expect.soft reports every
+  // failing row, not just the first.
+  test('Q refuses and writes nothing for every selection that is not inside one translation or the Note', async ({ page }) => {
+    await setScores(page, ALL_EMPTY);
+    await openComposer(page);
+    await expectTarget(page, 1);
+    for (const [label, key] of sources.filter((s) => !s[2])) {
+      await test.step(label, async () => {
+        await page.evaluate(() => { document.querySelector('#rmd-hint').textContent = ''; });
+        await makeSelection(page, key);
+        await page.keyboard.press('q');
+        await expect.soft(page.locator('#rmd-hint')).toContainText('one translation or the Note');
+        await expectRemarks(page, { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '', 7: '' });
+        await expect.soft(edit(page)).toHaveValue('');
+        // A refusal leaves the selection in place so it can be adjusted.
+        expect.soft(await page.evaluate(() => window.getSelection().toString())).not.toBe('');
+        await expectTarget(page, 1);
+      });
+    }
+  });
 
   test('Q twice on the same selection writes the quote once', async ({ page }) => {
     await setScores(page, ALL_EMPTY);
