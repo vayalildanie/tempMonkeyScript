@@ -311,16 +311,29 @@ test.describe('dispatchNativeSpace target', { tag: '@logic' }, () => {
 
 test.describe('one remark rule for the gate and Likely need remarks', { tag: '@logic' }, () => {
   const ALL_THREE = { 1: '3 Points', 2: '3 Points', 4: '3 Points', 5: '3 Points', 6: '3 Points', 7: '3 Points' };
+  // One flagged and three unflagged shapes are enough end to end; the whole leaf list is covered by the table test below.
   const LEAVES = [
     '2 Points / Fluency',
-    'Confusing / English meaning unclear / Meme or cultural reference unclear',
     'Confusing / English meaning unclear / Key word, phrase, or symbol unclear',
-    'Confusing / English meaning unclear / Sentence meaning or logical relation unclear',
-    'Confusing / Necessary context missing / Essential referent unresolved',
-    'Confusing / Necessary context missing / Essential linked context missing',
     'Confusing / Task input issue',
     'Confusing / Other / open feedback',
   ];
+
+  test('needsRemark: only Other / open feedback and non-Confusing, non-3 labels need a remark', async ({ page }) => {
+    const table = [
+      ['', false], ['   ', false], ['Confusing', false], ['3 Points', false],
+      ['2 Points', true], ['2 Points / Fluency', true],
+      ['Confusing / English meaning unclear / Meme or cultural reference unclear', false],
+      ['Confusing / English meaning unclear / Key word, phrase, or symbol unclear', false],
+      ['Confusing / English meaning unclear / Sentence meaning or logical relation unclear', false],
+      ['Confusing / Necessary context missing / Essential referent unresolved', false],
+      ['Confusing / Necessary context missing / Essential linked context missing', false],
+      ['Confusing / Task input issue', false],
+      ['Confusing / Other / open feedback', true],
+    ];
+    const got = await page.evaluate((rows) => Object.fromEntries(rows.map(([s]) => [s, window.TL.Utils.needsRemark(s)])), table);
+    expect(got).toEqual(Object.fromEntries(table));
+  });
 
   test('Submit Check submits once when the only non-3 labels are self-explanatory Confusing leaves with empty remarks', async ({ page }) => {
     await cycleTo(page, 'submit');
