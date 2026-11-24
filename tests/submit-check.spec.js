@@ -251,19 +251,32 @@ test.describe('remark gate', { tag: '@logic' }, () => {
     }
   }
 
-  for (const mode of ['label', 'submit', 'off']) {
-    test.describe(`${mode} mode`, () => {
-      for (const [label, scores, remarks, blocked] of cases) {
-        test(`${mode === 'off' ? 'Enter is left alone' : blocked ? 'Enter is blocked' : mode === 'submit' ? 'Enter submits' : 'Enter passes'} when ${label}`, async ({ page }) => {
-          await cycleTo(page, mode);
-          await setScores(page, { ...ALL_THREE, ...scores });
-          await setRemarks(page, remarks);
-          await page.keyboard.press('Enter');
-          await expectOutcome(page, mode, blocked);
-        });
-      }
+  async function press(page, mode, scores, remarks) {
+    await cycleTo(page, mode);
+    await setScores(page, { ...ALL_THREE, ...scores });
+    await setRemarks(page, remarks);
+    await page.keyboard.press('Enter');
+  }
+
+  // The blocking decision (submitBlocker) does not depend on the check mode: the mode only sets whether a pass
+  // submits, and 'off' returns before the check. So the table runs once, in Submit Check, and the other two modes
+  // get one test each (Label Check's clean pass is in the 'Label Check' describe above).
+  for (const [label, scores, remarks, blocked] of cases) {
+    test(`${blocked ? 'Enter is blocked' : 'Enter submits'} when ${label}`, async ({ page }) => {
+      await press(page, 'submit', scores, remarks);
+      await expectOutcome(page, 'submit', blocked);
     });
   }
+
+  test('Label Check blocks Enter when a non-3 score has no remark', async ({ page }) => {
+    await press(page, 'label', cases[0][1], cases[0][2]);
+    await expectOutcome(page, 'label', true);
+  });
+
+  test('Enter is left alone when the check is off, even on a row Submit Check would block', async ({ page }) => {
+    await press(page, 'off', cases[0][1], cases[0][2]);
+    await expectOutcome(page, 'off', true);
+  });
 
   // Trans2 is fully labelled but has no remark; Trans4 is a bare 2 Points. Each reason must sit with its own translation.
   for (const mode of ['label', 'submit']) {
@@ -298,16 +311,29 @@ test.describe('dispatchNativeSpace target', { tag: '@logic' }, () => {
 
 test.describe('one remark rule for the gate and Likely need remarks', { tag: '@logic' }, () => {
   const ALL_THREE = { 1: '3 Points', 2: '3 Points', 4: '3 Points', 5: '3 Points', 6: '3 Points', 7: '3 Points' };
+  // One flagged and three unflagged shapes are enough end to end; the whole leaf list is covered by the table test below.
   const LEAVES = [
     '2 Points / Fluency',
-    'Confusing / English meaning unclear / Meme or cultural reference unclear',
     'Confusing / English meaning unclear / Key word, phrase, or symbol unclear',
-    'Confusing / English meaning unclear / Sentence meaning or logical relation unclear',
-    'Confusing / Necessary context missing / Essential referent unresolved',
-    'Confusing / Necessary context missing / Essential linked context missing',
     'Confusing / Task input issue',
     'Confusing / Other / open feedback',
   ];
+
+  test('needsRemark: only Other / open feedback and non-Confusing, non-3 labels need a remark', async ({ page }) => {
+    const table = [
+      ['', false], ['   ', false], ['Confusing', false], ['3 Points', false],
+      ['2 Points', true], ['2 Points / Fluency', true],
+      ['Confusing / English meaning unclear / Meme or cultural reference unclear', false],
+      ['Confusing / English meaning unclear / Key word, phrase, or symbol unclear', false],
+      ['Confusing / English meaning unclear / Sentence meaning or logical relation unclear', false],
+      ['Confusing / Necessary context missing / Essential referent unresolved', false],
+      ['Confusing / Necessary context missing / Essential linked context missing', false],
+      ['Confusing / Task input issue', false],
+      ['Confusing / Other / open feedback', true],
+    ];
+    const got = await page.evaluate((rows) => Object.fromEntries(rows.map(([s]) => [s, window.TL.Utils.needsRemark(s)])), table);
+    expect(got).toEqual(Object.fromEntries(table));
+  });
 
   test('Submit Check submits once when the only non-3 labels are self-explanatory Confusing leaves with empty remarks', async ({ page }) => {
     await cycleTo(page, 'submit');
