@@ -251,19 +251,32 @@ test.describe('remark gate', { tag: '@logic' }, () => {
     }
   }
 
-  for (const mode of ['label', 'submit', 'off']) {
-    test.describe(`${mode} mode`, () => {
-      for (const [label, scores, remarks, blocked] of cases) {
-        test(`${mode === 'off' ? 'Enter is left alone' : blocked ? 'Enter is blocked' : mode === 'submit' ? 'Enter submits' : 'Enter passes'} when ${label}`, async ({ page }) => {
-          await cycleTo(page, mode);
-          await setScores(page, { ...ALL_THREE, ...scores });
-          await setRemarks(page, remarks);
-          await page.keyboard.press('Enter');
-          await expectOutcome(page, mode, blocked);
-        });
-      }
+  async function press(page, mode, scores, remarks) {
+    await cycleTo(page, mode);
+    await setScores(page, { ...ALL_THREE, ...scores });
+    await setRemarks(page, remarks);
+    await page.keyboard.press('Enter');
+  }
+
+  // The blocking decision (submitBlocker) does not depend on the check mode: the mode only sets whether a pass
+  // submits, and 'off' returns before the check. So the table runs once, in Submit Check, and the other two modes
+  // get one test each (Label Check's clean pass is in the 'Label Check' describe above).
+  for (const [label, scores, remarks, blocked] of cases) {
+    test(`${blocked ? 'Enter is blocked' : 'Enter submits'} when ${label}`, async ({ page }) => {
+      await press(page, 'submit', scores, remarks);
+      await expectOutcome(page, 'submit', blocked);
     });
   }
+
+  test('Label Check blocks Enter when a non-3 score has no remark', async ({ page }) => {
+    await press(page, 'label', cases[0][1], cases[0][2]);
+    await expectOutcome(page, 'label', true);
+  });
+
+  test('Enter is left alone when the check is off, even on a row Submit Check would block', async ({ page }) => {
+    await press(page, 'off', cases[0][1], cases[0][2]);
+    await expectOutcome(page, 'off', true);
+  });
 
   // Trans2 is fully labelled but has no remark; Trans4 is a bare 2 Points. Each reason must sit with its own translation.
   for (const mode of ['label', 'submit']) {
